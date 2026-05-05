@@ -666,7 +666,7 @@ class ImageToPDFApp:
             return re.sub(r'[\\/*?:"<>|]', '', value).strip()
 
         # --- Detect document type ---
-        is_degree     = bool(re.search(r'degree\s+received',    degree_text, re.IGNORECASE))
+        is_degree     = bool(re.search(r'Received', degree_text, re.IGNORECASE))
         is_transcript = bool(re.search(r'date\s+of\s+admission', date_text,   re.IGNORECASE))
         doc_folder    = "Degrees" if is_degree else ("Transcripts" if is_transcript else None)
 
@@ -700,7 +700,7 @@ class ImageToPDFApp:
         # --- Extract course/degree name (always, regardless of doc type) ---
         course_name = ""
         course_match = re.search(
-            r'degree\s+received[:\s]+([A-Za-z\s]+?)(?:\n|$)',
+            r'Course[:\s]+([A-Za-z\s]+?)(?:\n|$)',
             degree_text,
             re.IGNORECASE
         )
