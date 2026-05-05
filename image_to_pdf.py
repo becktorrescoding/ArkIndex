@@ -673,10 +673,17 @@ class ImageToPDFApp:
         # --- Extract name ---
         last, first, middle = "", "", ""
 
+        # Extract text that follows the "Name" label on the document
+        name_label_match = re.search(
+            r'[Nn]ame[:\s]+(.+)',
+            name_text
+        )
+        name_region = name_label_match.group(1).strip() if name_label_match else name_text
+
         # Format 1: Last, First [MI]
         name_match = re.search(
             r'\b([A-Z][a-zA-Z\'\-]+),\s+([A-Z][a-zA-Z\'\-]+)(?:\s+([A-Z])\.?)?',
-            name_text
+            name_region
         )
         if name_match:
             last   = name_match.group(1)
@@ -686,7 +693,7 @@ class ImageToPDFApp:
             # Format 2: First [MI] Last
             name_match = re.search(
                 r'\b([A-Z][a-zA-Z\'\-]+)(?:\s+([A-Z])\.?)?\s+([A-Z][a-zA-Z\'\-]+)\b',
-                name_text
+                name_region
             )
             if name_match:
                 first  = name_match.group(1)
