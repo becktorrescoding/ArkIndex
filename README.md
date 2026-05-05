@@ -606,18 +606,17 @@ Potential improvements for future versions:
 ### GUI Improvements
 - **Save/Load Settings**: Remember last used folders and mode
 - **Theme Selection**: Light/dark mode options
-- **Progress Bar**: Visual progress indicator during bulk conversion
-- **Drag & Drop**: Drop files directly into window
+- **Drag & Drop**: Drop files directly into window (part of new functionality)
 - ~~**Pause/Stop Controls**: Ability to pause or cancel processing mid-run~~ ✅ Implemented
 - ~~**Multi-file Conversion**: Convert all matched files in Search Mode~~ ✅ Implemented
 - ~~**Preview Pane**: Show thumbnail of found images before converting~~ ✅ Implemented
 
 ### Functionality
-- **Advanced Search**: Search by multiple criteria (name AND date range)
+- ~~**Advanced Search**: Search by multiple criteria (name AND date range)~~ ✅ Implemented
 - **Custom Match Threshold**: Slider to adjust partial match percentage
 - **Export Results**: Save list of matched/converted files to CSV/Excel
 - **Batch Processing**: Queue multiple searches to run sequentially
-- **Preserve Subdirectory Structure**: Mirror input folder structure in bulk output
+- ~~**Preserve Subdirectory Structure**: Mirror input folder structure in bulk output~~ Rigid output file structure made
 - **Bulk Output Naming**: Custom naming conventions for bulk converted files
 
 ### Performance
@@ -631,7 +630,6 @@ Potential improvements for future versions:
 - **File Management**: Option to move/copy originals after conversion
 - **PDF Merging**: Combine multiple matched documents into single PDF
 - **Annotation**: Add notes or highlights to converted PDFs
-- **Cloud Integration**: Upload to Google Drive/Dropbox after conversion
 - **Logging System**: Export detailed logs to file for auditing
 
 ## License
