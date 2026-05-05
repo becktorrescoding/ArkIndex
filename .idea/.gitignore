@@ -10,3 +10,5 @@
 /httpRequests/
 # Personal Dictionary for project
 /dictionaries/
+# Inspection Profiles
+/inspectionProfiles/
