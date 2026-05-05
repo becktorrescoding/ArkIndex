@@ -585,7 +585,7 @@ class ImageToPDFApp:
         if str(file_path).lower().endswith('.pdf'):
             self.log("Document found")
             pages = convert_from_path(file_path, dpi = 600)
-            self.log(f"Number of pages: {pages.length()}")
+            self.log(f"Number of pages: {len(pages)}")
             return pages[0]
         return Image.open(file_path)
 
