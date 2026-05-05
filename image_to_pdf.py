@@ -151,16 +151,16 @@ class ImageToPDFApp:
         title.pack(fill="x")
 
         # Path Selection
-        path_frame = tk.Frame(self.root, padx=20, pady=10)
-        path_frame.pack(fill="x")
+        self.path_frame = tk.Frame(self.root, padx=20, pady=10)
+        self.path_frame.pack(fill="x")
 
-        tk.Label(path_frame, text="Input Folder:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        tk.Entry(path_frame, textvariable=self.input_path, width=40).grid(row=0, column=1, padx=5)
-        tk.Button(path_frame, text="Browse", command=self.browse_input).grid(row=0, column=2)
+        tk.Label(self.path_frame, text="Input Folder:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        tk.Entry(self.path_frame, textvariable=self.input_path, width=40).grid(row=0, column=1, padx=5)
+        tk.Button(self.path_frame, text="Browse", command=self.browse_input).grid(row=0, column=2)
 
-        tk.Label(path_frame, text="Output Folder:").grid(row=1, column=0, sticky="w", pady=5)
-        tk.Entry(path_frame, textvariable=self.output_path, width=40).grid(row=1, column=1, padx=5)
-        tk.Button(path_frame, text="Browse", command=self.browse_output).grid(row=1, column=2)
+        tk.Label(self.path_frame, text="Output Folder:").grid(row=1, column=0, sticky="w", pady=5)
+        tk.Entry(self.path_frame, textvariable=self.output_path, width=40).grid(row=1, column=1, padx=5)
+        tk.Button(self.path_frame, text="Browse", command=self.browse_output).grid(row=1, column=2)
 
         # Mode Selection
         self.mode_frame = tk.LabelFrame(
@@ -422,12 +422,11 @@ class ImageToPDFApp:
                         self.log(f"Converting: {file}")
 
                         # Extract text and generate structured filename
-                        img = Image.open(img_path)
-                        name = pytesseract.image_to_string(img.crop((337,  203,  2000, 261)))
-                        admission_date = pytesseract.image_to_string(img.crop((1491, 275,  1941, 410)))
-                        graduation_date = pytesseract.image_to_string(img.crop((1586, 417,  1939, 542)))
-                        degree = pytesseract.image_to_string(img.crop((318,  393,  1600, 591)))
-                        output_stem = self.generate_filename(name, admission_date, graduation_date, degree, img_path.stem)
+                        img = self.open_as_image(img_path)
+                        name = pytesseract.image_to_string(img.crop((337,  203,  2000,  261)))
+                        date = pytesseract.image_to_string(img.crop((1446, 310,  1954, 596)))
+                        degree = pytesseract.image_to_string(img.crop((318, 393,  1600, 591)))
+                        output_stem = self.generate_filename(name, date, degree, img_path.stem)
                         output_file = output_folder / f"{output_stem}.pdf"
 
                         # Avoid overwriting existing files
@@ -584,14 +583,24 @@ class ImageToPDFApp:
     def open_as_image(self, file_path):
         """Open any supported file as a PIL Image (first page for PDFs)."""
         if str(file_path).lower().endswith('.pdf'):
-            pages = convert_from_path(file_path, first_page=1, last_page=1)
+            self.log("Document found")
+            pages = convert_from_path(file_path, dpi = 600)
+            self.log(f"Number of pages: {pages.length()}")
             return pages[0]
         return Image.open(file_path)
 
     def search_folders(self, folder_path, search_for):
-        """Partial keyword matching — returns file(s) with the most keyword hits (ties kept)."""
+        """
+        Keyword matching against the top third of each document.
+
+        The name is always in the top third but its exact position varies,
+        so a fixed crop is unreliable. OCR-ing the top third is fast enough
+        and avoids false matches from body text lower on the page.
+
+        Returns file(s) with the highest keyword hit count (ties kept).
+        """
         keywords = search_for.split()
-        scores = {}  # img_path -> matched keyword count
+        scores = {}
 
         all_files = [
             os.path.join(root, file)
@@ -600,7 +609,7 @@ class ImageToPDFApp:
             if file.lower().endswith(self.valid_ext)
         ]
         total = len(all_files)
-        self.log(f"Scanning {total} file(s) for partial matches...")
+        self.log(f"Scanning {total} file(s)...")
 
         for i, img_path in enumerate(all_files, start=1):
             if self._check_pause_stop():
@@ -609,13 +618,18 @@ class ImageToPDFApp:
             file = os.path.basename(img_path)
             self.log(f"  Scanning {i}/{total}: {file}")
             try:
-                name_crop = self.open_as_image(img_path).crop((337, 203, 727, 261))
-                text = pytesseract.image_to_string(name_crop)
+                img = self.open_as_image(img_path)
+                w, h = img.size
+                top_third = img.crop((20, 20, w - 20, h // 3))
+                text = pytesseract.image_to_string(top_third)
                 matched_words = [word for word in keywords if word.lower() in text.lower()]
                 count = len(matched_words)
                 if count > 0:
                     scores[img_path] = count
-                    self.log(f"  ~ {count}/{len(keywords)} keyword(s) matched: {file}")
+                    if count == len(keywords):
+                        self.log(f"  ✓ Full match ({count}/{len(keywords)}): {file}")
+                    else:
+                        self.log(f"  ~ {count}/{len(keywords)} keyword(s) matched: {file}")
             except Exception as e:
                 self.log(f"  ✗ Error processing {file}: {e}")
 
@@ -623,11 +637,11 @@ class ImageToPDFApp:
             return []
 
         best = max(scores.values())
-        partial_matched_files = [f for f, c in scores.items() if c == best]
-        self.log(f"  ✓ Best match: {best}/{len(keywords)} keyword(s) — {len(partial_matched_files)} file(s)")
-        return partial_matched_files
+        matched = [f for f, c in scores.items() if c == best]
+        self.log(f"  Best match: {best}/{len(keywords)} keyword(s) — {len(matched)} file(s)")
+        return matched
 
-    def generate_filename(self, name_text, admission_text, graduation_text, degree_text, fallback_stem):
+    def generate_filename(self, name_text, date_text, degree_text, fallback_stem):
         """
         Generate a structured filename and determine the output subdirectory.
 
@@ -635,7 +649,7 @@ class ImageToPDFApp:
           "Degrees/<year>", "Transcripts/<year>", or "Unprocessed"
 
         Resolved filename format (Degrees and Transcripts):
-          LastName_FirstName_MI_CourseName_Month_DD_YYYY
+          LastName FirstName MI CourseName Month DD YYYY
 
         Unprocessed filename format (date could not be extracted):
           Last, First MI CourseName
@@ -649,8 +663,8 @@ class ImageToPDFApp:
             return re.sub(r'[\\/*?:"<>|]', '', value).strip()
 
         # --- Detect document type ---
-        is_degree     = bool(re.search(r'graduated\s+received',    degree_text,    re.IGNORECASE))
-        is_transcript = bool(re.search(r'date\s+of\s+admission', admission_text, re.IGNORECASE))
+        is_degree     = bool(re.search(r'degree\s+received',    degree_text, re.IGNORECASE))
+        is_transcript = bool(re.search(r'date\s+of\s+admission', date_text,   re.IGNORECASE))
         doc_folder    = "Degrees" if is_degree else ("Transcripts" if is_transcript else None)
 
         # --- Extract name ---
@@ -730,20 +744,18 @@ class ImageToPDFApp:
 
         date_str, year_str = "", ""
         if is_degree:
-            # Degrees: use date of graduation crop
             date_match = re.search(
-                DATE_NAMED + r'|' + DATE_NUMERIC,
-                graduation_text, re.IGNORECASE
+                r'degree\s+received[^\n]*?(' + DATE_NAMED + r'|' + DATE_NUMERIC + r')',
+                degree_text, re.IGNORECASE
             )
         else:
-            # Transcripts: use date of admission crop
             date_match = re.search(
-                DATE_NAMED + r'|' + DATE_NUMERIC,
-                admission_text, re.IGNORECASE
+                r'date\s+of\s+admission[:\s]+(' + DATE_NAMED + r'|' + DATE_NUMERIC + r')',
+                date_text, re.IGNORECASE
             )
 
         if date_match:
-            date_str, year_str = normalise_date(date_match.group(0))
+            date_str, year_str = normalise_date(date_match.group(1))
         else:
             self.log(f"  ⚠ Could not extract date.")
 
@@ -784,13 +796,12 @@ class ImageToPDFApp:
             self.log(f"Converting {img_path.name} to PDF...")
 
             img = self.open_as_image(img_path)
-            name_text       = pytesseract.image_to_string(img.crop((337,  203,  2000, 261)))
-            admission_text  = pytesseract.image_to_string(img.crop((1491, 275,  1941, 410)))
-            graduation_text = pytesseract.image_to_string(img.crop((1586, 417,  1939, 542)))
-            degree_text     = pytesseract.image_to_string(img.crop((318,  393,  1600, 591)))
+            name_text   = pytesseract.image_to_string(img.crop((337,  203,  2000,  261)))
+            date_text   = pytesseract.image_to_string(img.crop((1446, 310,  1954, 596)))
+            degree_text = pytesseract.image_to_string(img.crop((318, 393,  1600, 591)))
 
             output_stem, subfolder = self.generate_filename(
-                name_text, admission_text, graduation_text, degree_text, img_path.stem
+                name_text, date_text, degree_text, img_path.stem
             )
 
             output_dir = base_output / subfolder
@@ -817,18 +828,29 @@ class ImageToPDFApp:
             self.log(f"✗ Error converting {image_path}: {e}")
 
     def search_images(self, matched_files, date):
-        """Filter by year - This one was correct!"""
+        """
+        Filter name-matched files by year.
+
+        Searches only the top third of each document — the same region used
+        for name matching — so years that appear in body text or footers
+        don't cause false positives.
+        """
         files = []
 
         for file in matched_files:
             try:
-                text = pytesseract.image_to_string(Image.open(file))
+                img = self.open_as_image(file)
+                w, h = img.size
+                top_third = img.crop((0, 0, w, h // 3))
+                text = pytesseract.image_to_string(top_third)
 
                 if date.lower() in text.lower():
                     files.append(file)
+                else:
+                    self.log(f"  ✗ Year '{date}' not found in top third, skipping: {os.path.basename(file)}")
 
             except Exception as e:
-                self.log(f"Error processing {file}: {e}")
+                self.log(f"  ✗ Error processing {file}: {e}")
 
         return files
 
