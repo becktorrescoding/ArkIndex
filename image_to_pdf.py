@@ -426,13 +426,16 @@ class ImageToPDFApp:
                         name = pytesseract.image_to_string(img.crop((337,  203,  2000,  261)))
                         date = pytesseract.image_to_string(img.crop((1446, 310,  1954, 596)))
                         degree = pytesseract.image_to_string(img.crop((318, 393,  1600, 591)))
-                        output_stem = self.generate_filename(name, date, degree, img_path.stem)
-                        output_file = output_folder / f"{output_stem}.pdf"
+                        output_stem, subfolder = self.generate_filename(name, date, degree, img_path.stem)
+
+                        output_dir = output_folder / subfolder
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        output_file = output_dir / f"{output_stem}.pdf"
 
                         # Avoid overwriting existing files
                         counter = 1
                         while output_file.exists():
-                            output_file = output_folder / f"{output_stem}_{counter}.pdf"
+                            output_file = output_dir / f"{output_stem}_{counter}.pdf"
                             counter += 1
 
                         ocrmypdf.ocr(
