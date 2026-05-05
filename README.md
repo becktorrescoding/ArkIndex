@@ -1,4 +1,4 @@
-# Image to PDF Converter & OCR Search Tool
+# Image to PDF Converter & OCR Search Tool (WIP)
 
 A Python GUI application that combines OCR-based document search with image-to-PDF conversion capabilities. Built to help universities digitize and manage pre-digital era scanned transcripts and degrees. Features an intuitive graphical interface with two operation modes: search through image files and PDFs using Optical Character Recognition (OCR) to find specific documents, or bulk convert entire folders of images to searchable PDFs — all without needing to edit code.
 
