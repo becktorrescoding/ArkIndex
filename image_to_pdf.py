@@ -423,10 +423,10 @@ class ImageToPDFApp:
 
                         # Extract text and generate structured filename
                         img = self.open_as_image(img_path)
-                        name = pytesseract.image_to_string(img.crop((337,  203,  2000,  261)))
-                        date = pytesseract.image_to_string(img.crop((1446, 310,  1954, 596)))
-                        degree = pytesseract.image_to_string(img.crop((318, 393,  1600, 591)))
-                        output_stem, subfolder = self.generate_filename(name, date, degree, img_path.stem)
+                        w, h = img.size
+                        full_text = pytesseract.image_to_string(img)
+                        name_text = pytesseract.image_to_string(img.crop((0, 0, w, h // 4)))
+                        output_stem, subfolder = self.generate_filename(name_text, full_text, full_text, img_path.stem)
 
                         output_dir = output_folder / subfolder
                         output_dir.mkdir(parents=True, exist_ok=True)
@@ -799,12 +799,12 @@ class ImageToPDFApp:
             self.log(f"Converting {img_path.name} to PDF...")
 
             img = self.open_as_image(img_path)
-            name_text   = pytesseract.image_to_string(img.crop((337,  203,  2000,  261)))
-            date_text   = pytesseract.image_to_string(img.crop((1446, 310,  1954, 596)))
-            degree_text = pytesseract.image_to_string(img.crop((318, 393,  1600, 591)))
+            w, h = img.size
+            full_text = pytesseract.image_to_string(img)
+            name_text = pytesseract.image_to_string(img.crop((0, 0, w, h // 4)))
 
             output_stem, subfolder = self.generate_filename(
-                name_text, date_text, degree_text, img_path.stem
+                name_text, full_text, full_text, img_path.stem
             )
 
             output_dir = base_output / subfolder
