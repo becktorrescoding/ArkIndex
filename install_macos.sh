@@ -66,9 +66,9 @@ else
     ok "Ghostscript found: $(gs --version)"
 fi
 
-# 5. Poppler (required by pdf2image)
+# 5. Poppler (pdftoppm)
 echo ""
-echo "[5/6] Checking for Poppler (required by pdf2image)..."
+echo "[5/6] Checking for Poppler (pdftoppm)..."
 if ! command -v pdftoppm &>/dev/null; then
     info "Installing Poppler via Homebrew..."
     brew install poppler
@@ -81,13 +81,13 @@ fi
 echo ""
 echo "[6/6] Installing Python packages..."
 $PYTHON -m pip install --upgrade pip --quiet
-$PYTHON -m pip install --upgrade ocrmypdf pytesseract Pillow pdf2image \
+$PYTHON -m pip install --upgrade ocrmypdf pytesseract Pillow pymupdf \
     || fail "Failed to install Python packages."
 ok "Python packages installed."
 
 echo ""
 echo "============================================================"
 echo "  Installation complete!"
-echo "  Run the app with:  $PYTHON image_to_pdf.py"
+echo "  Run the app with:  $PYTHON app.py"
 echo "============================================================"
 echo ""

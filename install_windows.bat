@@ -79,7 +79,7 @@ if %errorlevel% neq 0 (
 
 :: Step 5: Poppler
 echo.
-echo [5/6] Checking for Poppler (required by pdf2image)...
+echo [5/6] Checking for Poppler (pdftoppm)...
 pdftoppm -v >nul 2>&1
 if %errorlevel% neq 0 (
     echo      Poppler not found. Installing via winget...
@@ -105,7 +105,7 @@ if %errorlevel% neq 0 (
 :: Step 6: Python packages
 echo.
 echo [6/6] Installing Python packages...
-python -m pip install --upgrade ocrmypdf pytesseract Pillow pdf2image
+python -m pip install --upgrade ocrmypdf pytesseract Pillow pymupdf
 if %errorlevel% neq 0 (
     echo      ERROR: Failed to install Python packages.
     pause & exit /b 1
@@ -115,7 +115,7 @@ echo      Python packages installed.
 echo.
 echo ============================================================
 echo   Installation complete!
-echo   Run the app with:  python image_to_pdf.py
+echo   Run the app with:  python app.py
 echo.
 echo   NOTE: If tools are not found, open a fresh terminal so
 echo   PATH changes take effect.

@@ -95,9 +95,9 @@ else
     ok "Ghostscript found: $(gs --version)"
 fi
 
-# 5. Poppler (required by pdf2image)
+# 5. Poppler (pdftoppm)
 echo ""
-echo "[5/6] Checking for Poppler (required by pdf2image)..."
+echo "[5/6] Checking for Poppler (pdftoppm)..."
 if ! command -v pdftoppm &>/dev/null; then
     info "Installing Poppler..."
     case "$PKG_MANAGER" in
@@ -113,14 +113,17 @@ fi
 # 6. Python packages
 echo ""
 echo "[6/6] Installing Python packages..."
-$PYTHON -m pip install --upgrade pip --quiet
-$PYTHON -m pip install --upgrade ocrmypdf pytesseract Pillow pdf2image \
+# PEP 668: modern Debian/Ubuntu block system-wide pip installs.
+# --break-system-packages bypasses this for dedicated setup scripts.
+PIP_FLAGS="--break-system-packages"
+$PYTHON -m pip install --upgrade pip --quiet $PIP_FLAGS 2>/dev/null || true
+$PYTHON -m pip install --upgrade ocrmypdf pytesseract Pillow pymupdf $PIP_FLAGS \
     || fail "Failed to install Python packages. Try running with sudo or inside a virtual environment."
 ok "Python packages installed."
 
 echo ""
 echo "============================================================"
 echo "  Installation complete!"
-echo "  Run the app with:  $PYTHON image_to_pdf.py"
+echo "  Run the app with:  $PYTHON app.py"
 echo "============================================================"
 echo ""
