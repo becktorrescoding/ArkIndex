@@ -272,7 +272,7 @@ class Application(tk.Tk):
 
         tk.Label(
             self.search_frame,
-            text="Optional: Year [Admission/Graduation/DOB] (yyyy):",
+            text="Optional: Filter by Year (yyyy):\n[Admission/Graduation/DOB]",
             font=["Arial", 9],
         ).grid(row=1, column=0, sticky="w", pady=5)
         tk.Entry(self.search_frame, textvariable=self.search_year, width=10).grid(
@@ -806,7 +806,11 @@ class Application(tk.Tk):
 
         name = self.search_name.get().strip()
         if len(name.split()) == 3:
-            name += "."
+            first, last, middle = name.split()
+            name = last + " " + first + " " + middle + "."
+        else:
+            first, last = name.split()
+            name = last + " " + first
 
         # -- Detect document type & degree --------------------------
         is_degree = False
