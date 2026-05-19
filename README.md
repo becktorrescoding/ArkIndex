@@ -13,7 +13,7 @@ A Python GUI application that combines OCR-based document search with image-to-P
 - **Fuzzy Matching**: Falls back to partial keyword matching if exact match fails — returns the file(s) with the most keyword hits (all ties included)
 - **Year Filtering**: Optional field to refine search results by year
 - **Real-time Logging**: Processing status displayed in scrollable log window with progress counters
-- **Smart Filename Generation**: Automatically names output PDFs using information extracted from the document (name, degree/admission date, document type)
+- **Smart Filename Generation**: Automatically names output PDFs using information extracted from the document (name, course, degree/admission date, document type)
 - **Threaded Processing**: Non-blocking operations keep GUI responsive during long tasks
 - **Pause & Stop Controls**: Pause processing between files and resume at any time, or stop early — a summary of completed work is always shown
 - **Recursive Search**: Searches through entire directory structures
@@ -23,10 +23,10 @@ A Python GUI application that combines OCR-based document search with image-to-P
 
 ### Required Software
 
-1. **Python 3.7+** — Download from [python.org](https://www.python.org/downloads/)
+1. **Python 3.9+** — Download from [python.org](https://www.python.org/downloads/)
 2. **Tesseract OCR** — See installation instructions below
-3. **Poppler** — Required by pdf2image for PDF rendering; see installation instructions below
-4. **Python packages** — `ocrmypdf`, `pytesseract`, `pillow`, `pdf2image`
+3. **Poppler** — Required for PDF rendering; see installation instructions below
+4. **Python packages** — `ocrmypdf`, `pytesseract`, `pillow`, `pymupdf`
 
 ---
 
@@ -70,7 +70,7 @@ Or download and extract the ZIP from the GitHub page.
    ```
    You should see the Tesseract version number printed.
 
-> **Note**: If you see a `TesseractNotFoundError` when running the app, you can alternatively set the path directly in `image_to_pdf.py` by adding this line near the top of the file:
+> **Note**: If you see a `TesseractNotFoundError` when running the app, you can alternatively set the path directly in `app.py` by adding this line near the top of the file:
 > ```python
 > pytesseract.pytesseract.tesseract_cmd = r'C:\Users\%USERNAME%\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
 > ```
@@ -122,7 +122,7 @@ Or download and extract the ZIP from the GitHub page.
 
 ### 3. Install Poppler
 
-Poppler is required by `pdf2image` to render PDF pages as images during search. It is **not** a Python package and must be installed separately.
+Poppler is required for PDF rendering during search. It is **not** a Python package and must be installed separately.
 
 #### Windows
 
@@ -154,13 +154,13 @@ sudo apt-get install poppler-utils
 ### 4. Install Python Dependencies
 
 ```bash
-pip install ocrmypdf pytesseract pillow pdf2image
+pip install ocrmypdf pytesseract pillow pymupdf
 ```
 
 ### 5. Launch the Application
 
 ```bash
-python image_to_pdf.py
+python app.py
 ```
 
 
@@ -209,7 +209,7 @@ The application features a clean, intuitive interface:
 3. Click "Browse" to select your output folder (where PDFs will be saved)
 4. Choose your operation mode and click "Start Search"
 
-**Optional**: If you want to set default paths in the code, edit `image_to_pdf.py`:
+**Optional**: If you want to set default paths in the code, edit `app.py`:
 - Modify `self.input_path` and `self.output_path` initialization in `__init__()`
 
 ## Usage
@@ -217,7 +217,7 @@ The application features a clean, intuitive interface:
 ### Running the Application
 
 ```bash
-python image_to_pdf.py
+python app.py
 ```
 
 A graphical window will open with the following interface:
@@ -332,7 +332,7 @@ If you enter a year, matched files are filtered to only those containing that ye
 
 **Scenario 1**: Find and convert a transcript for "Jane Doe" who graduated in 1998
 
-1. Launch app: `python image_to_pdf.py`
+1. Launch app: `python app.py`
 2. Browse input to: `C:/University/ScannedRecords`
 3. Browse output to: `C:/University/Converted`
 4. Select **Search Mode**
@@ -343,7 +343,7 @@ If you enter a year, matched files are filtered to only those containing that ye
 
 **Scenario 2**: Bulk convert an entire archive of scanned degrees
 
-1. Launch app: `python image_to_pdf.py`
+1. Launch app: `python app.py`
 2. Browse input to: `C:/University/DegreeArchive`
 3. Browse output to: `C:/University/Converted`
 4. Select **Bulk Convert Mode**
@@ -356,6 +356,29 @@ If you enter a year, matched files are filtered to only those containing that ye
 
 The application uses a **class-based tkinter GUI** with the following structure:
 
+```
+Application (Main Class, inherits tk.Tk)
+├── __init__()              # Initialize window and variables
+├── create_widgets()        # Build GUI interface
+├── toggle_pause()          # Pause or resume processing
+├── request_stop()          # Signal worker thread to stop after current file
+── _check_pause_stop()     # Called between files; blocks while paused, returns True if stopped
+├── _reset_buttons()        # Re-enable Start and disable Pause/Stop
+├── toggle_mode()           # Show/hide search fields based on mode
+├── browse_input()          # Handle input folder selection
+├── browse_output()         # Handle output folder selection
+── start()                 # Validate inputs and start thread
+├── route_mode()            # Route to correct mode (runs in thread)
+├── search_mode()           # Search Mode workflow
+├── matches_found()         # Handle search results and year filtering
+├── filter_year()           # Filter matched files by year
+├── bulk_mode()             # Bulk Convert Mode workflow
+├── show_preview_window()   # Preview matched files before converting
+├── open_as_image()         # Open image or PDF first page as PIL Image (via PyMuPDF)
+├── convert_image()         # Convert single image to searchable PDF
+├── generate_filename()     # Extract fields from OCR text and build filename
+│   └── extract_course_name()  # Extract course name (up to 9 words) from OCR text
+└── log()                   # Display messages in GUI
 ```
 ImageToPDFApp (Main Class)
 ├── __init__()              # Initialize window and variables
@@ -387,26 +410,28 @@ When a document is converted in Search Mode, the output PDF is automatically nam
 
 **Degree format:**
 ```
-LastName_FirstName_MI_DegreeName_Month_Day_Year.pdf
+Last, First [MI.] (Course Degree) Month DD, YYYY
 ```
-Example: `Smith_John_A_Bachelor_of_Commerce_June_12_1979.pdf`
+Example: `Doe, John A. (Mechanical Engineering Bachelor of Science) May 20, 1998.pdf`
 
 **Transcript format:**
 ```
-LastName_FirstName_MI_Transcript_Month_Day_Year.pdf
+Last, First [MI.] Month DD, YYYY
 ```
-Example: `Smith_John_A_Transcript_March_3_1975.pdf`
+Example: `Doe, John A. March 03, 1975.pdf`
 
 **How it works:**
-1. Detects document type by looking for `"Degree Received"` or `"Date of Admission"` in the OCR text
-2. Extracts the student name — handles both `Last, First MI` and `First MI Last` formats
-3. For degrees: extracts the degree name from the text following `"Degree Received"` and the graduation date to its right
-4. For transcripts: extracts the admission date from the text following `"Date of Admission"`
-5. Normalizes dates to a consistent `Month_DD_YYYY` format regardless of how they appear in the document — both `June 12, 1979` and `06/12/79` will produce `June_12_1979`. 2-digit years are expanded automatically (`79` → `1979`, years `00–19` are assumed to be 2000s)
+1. Detects document type by looking for degree patterns (`Associate in`, `Bachelor of Science in`, `Certificate of Graduation`) or transcript markers (`date of admission`)
+2. Extracts the student name from user input; appends a period if a middle initial is present
+3. **Course extraction** (degrees only): Looks for the course name in two locations:
+   - Text immediately before the degree keyword on the same line (up to 9 words)
+   - If the line contains "Graduated-Received", checks two lines above the degree for a "Course:" label
+4. Extracts the relevant date — graduation date for degrees, admission date for transcripts
+5. Normalizes dates to a consistent `Month DD, YYYY` format regardless of how they appear in the document — both `June 12, 1979` and `06/12/79` will produce `June 12, 1979`. 2-digit years are expanded automatically (`79` → `1979`, years `00–19` are assumed to be 2000s)
 6. Assembles the parts into a clean filename, stripping invalid characters
 
 **Fallback behavior:**
-If any field cannot be extracted, a warning is logged and the original scanned filename is used instead. This ensures conversion always completes even if the OCR output is unclear.
+If the date cannot be extracted, a warning is logged and the file is routed to an `Error/Date` folder. The conversion still completes — only the filename and destination differ.
 
 ### Search Mode Workflow
 
@@ -436,6 +461,7 @@ If any field cannot be extracted, a warning is logged and the original scanned f
 
 - **OCR Engine**: Tesseract (via pytesseract) extracts text from images
 - **PDF Creation**: OCRmyPDF creates searchable PDFs with deskewing and forced OCR
+- **PDF Rendering**: PyMuPDF (fitz) renders PDF pages as images for preview and processing
 - **Threading**: `threading.Thread` prevents GUI freezing during processing; `threading.Event` objects (`_pause_event`, `_stop_event`) coordinate pause and stop signals between the GUI and worker thread
 - **File Handling**: `pathlib.Path` for cross-platform path management
 - **Error Handling**: Try-except blocks catch and log errors gracefully
@@ -513,7 +539,7 @@ All processing is performed **entirely locally on your machine**. No files, text
 | Tesseract OCR       | None            | None — fully offline |
 | OCRmyPDF            | None            | None — fully offline |
 | Pillow              | None            | None — fully offline |
-| pdf2image / Poppler | None            | None — fully offline |
+| PyMuPDF / Poppler   | None            | None — fully offline |
 | tkinter             | None            | None — fully offline |
 
 This makes the tool suitable for handling sensitive documents such as university transcripts and degrees, where student records should remain confidential and within your institution's systems.
@@ -525,12 +551,9 @@ This makes the tool suitable for handling sensitive documents such as university
 - **OCR Accuracy**: Depends on image quality, text clarity, and scan resolution
 - **Processing Speed**: Large directories or high-resolution images can be slow
 - **Network Drives**: May be slower than local storage; consider copying files locally first
-- **Search OCR Region**: Name search targets a fixed crop region `(337, 203, 727, 261)` — documents with a different layout may not match correctly
-- **Filename generation accuracy**: Auto-naming relies on OCR quality — poor scans may fall back to the original filename
+- **Filename generation accuracy**: Auto-naming relies on OCR quality — poor scans may fall back to minimal naming
 - **Year Format**: Searches for year as a text string in OCR output; works with both 2-digit and 4-digit years depending on what appears in the document
-- **GUI Responsiveness**: During OCR processing, only log updates; Start button disabled until complete; Pause and Stop active during processing
 - **Memory Usage**: Processing very large images may consume significant RAM
-- **Bulk Output Folder**: All converted files written to a flat output folder (subdirectory structure not preserved)
 
 ## Troubleshooting
 
@@ -538,8 +561,8 @@ This makes the tool suitable for handling sensitive documents such as university
 **Symptom**: Double-clicking does nothing or window appears then closes
 
 **Solutions**:
-- Run from terminal to see error messages: `python image_to_pdf.py`
-- Check Python version (requires 3.7+)
+- Run from terminal to see error messages: `python app.py`
+- Check Python version (requires 3.9+)
 - Verify tkinter is installed: `python -m tkinter` (should open test window)
 
 ### "Tesseract not found" Error
@@ -548,7 +571,7 @@ This makes the tool suitable for handling sensitive documents such as university
 **Solutions**:
 - Ensure Tesseract OCR is installed — see the [Installation](#installation) section for your OS
 - Open a terminal and run `tesseract --version` to confirm it's on your PATH
-- **Windows**: If it's still not found after adding to PATH, open a fresh Command Prompt (the old one won't pick up the change) and try again. Alternatively, set the path directly in `image_to_pdf.py`:
+- **Windows**: If it's still not found after adding to PATH, open a fresh Command Prompt (the old one won't pick up the change) and try again. Alternatively, set the path directly in `app.py`:
   ```python
   pytesseract.pytesseract.tesseract_cmd = r'C:\Users\%USERNAME%\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
   ```
@@ -672,5 +695,5 @@ Project Link: [https://github.com/becktorrescoding/image_to_pdf](https://github.
 - [OCRmyPDF](https://github.com/ocrmypdf/OCRmyPDF) - PDF conversion tool
 - [pytesseract](https://github.com/madmaze/pytesseract) - Python wrapper for Tesseract
 - [Pillow](https://python-pillow.org/) - Python imaging library
-- [pdf2image](https://github.com/Belval/pdf2image) - PDF page rendering for search
+- [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF rendering and manipulation
 - [Poppler](https://poppler.freedesktop.org/) - PDF rendering engine
