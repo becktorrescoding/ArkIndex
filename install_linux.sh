@@ -114,12 +114,45 @@ fi
 echo ""
 echo "[6/6] Installing Python packages..."
 # PEP 668: modern Debian/Ubuntu block system-wide pip installs.
-# --break-system-packages bypasses this for dedicated setup scripts.
-PIP_FLAGS="--break-system-packages"
-$PYTHON -m pip install --upgrade pip --quiet $PIP_FLAGS 2>/dev/null || true
-$PYTHON -m pip install --upgrade ocrmypdf pytesseract Pillow pymupdf $PIP_FLAGS \
-    || fail "Failed to install Python packages. Try running with sudo or inside a virtual environment."
-ok "Python packages installed."
+# Disable set -e so we can try multiple strategies.
+set +e
+
+# First, upgrade pip itself (may need --break-system-packages or --user)
+$PYTHON -m ensurepip --upgrade 2>/dev/null || true
+$PYTHON -m pip install --upgrade pip --quiet --break-system-packages 2>/dev/null || \
+$PYTHON -m pip install --upgrade pip --quiet --user 2>/dev/null || \
+$PYTHON -m pip install --upgrade pip --quiet 2>/dev/null || true
+
+PIP_OK=0
+
+# Strategy 1: --break-system-packages (pip 23.1+)
+echo "     Trying --break-system-packages..."
+$PYTHON -m pip install ocrmypdf pytesseract Pillow pymupdf --break-system-packages
+[[ $? -eq 0 ]] && PIP_OK=1
+
+# Strategy 2: --user (bypasses PEP 668)
+if [[ $PIP_OK -eq 0 ]]; then
+    echo "     Trying --user..."
+    $PYTHON -m pip install ocrmypdf pytesseract Pillow pymupdf --user
+    [[ $? -eq 0 ]] && PIP_OK=1
+fi
+
+# Strategy 3: plain install (non-PEP-668 systems)
+if [[ $PIP_OK -eq 0 ]]; then
+    echo "     Trying plain pip install..."
+    $PYTHON -m pip install ocrmypdf pytesseract Pillow pymupdf
+    [[ $? -eq 0 ]] && PIP_OK=1
+fi
+
+set -e
+
+if [[ $PIP_OK -eq 1 ]]; then
+    ok "Python packages installed."
+else
+    fail "pip install failed. Create a venv instead:
+    $PYTHON -m venv .venv && source .venv/bin/activate
+    pip install ocrmypdf pytesseract Pillow pymupdf"
+fi
 
 echo ""
 echo "============================================================"

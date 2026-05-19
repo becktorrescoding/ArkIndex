@@ -39,15 +39,13 @@ def _check_python_version():
         sys.exit(1)
 
 
-def _check_system_tool(cmd_candidates: list) -> bool:
-    """Try each candidate command; return True if any succeeds."""
-    for cmd in cmd_candidates:
-        try:
-            subprocess.run(cmd, capture_output=True, check=True)
-            return True
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            continue
-    return False
+def _check_system_tool(cmd: list) -> bool:
+    """Try a single command; return True if it succeeds."""
+    try:
+        subprocess.run(cmd, capture_output=True, check=True, timeout=5)
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
 
 
 def _check_python_package(package: str) -> bool:
@@ -191,12 +189,11 @@ def sort_dates_chronologically(date_strings: list[str]) -> list[str]:
 # Application
 # ---------------------------------------------------------------------------
 class Application(tk.Tk):
-    def __init__(self, root):
+    def __init__(self):
         super().__init__()
-        self.root = root
-        self.root.title("Image to PDF Converter")
-        self.root.geometry("1000x900")
-        self.root.resizable(width=True, height=True)
+        self.title("Image to PDF Converter")
+        self.geometry("1000x900")
+        self.resizable(width=True, height=True)
 
         self.input_path = tk.StringVar()
         self.output_path = tk.StringVar()
@@ -216,7 +213,7 @@ class Application(tk.Tk):
     # ------------------------------------------------------------------
     def create_widgets(self):
         title = tk.Label(
-            self.root,
+            self,
             text="Image to PDF Converter",
             font=("Arial", 14, "bold"),
             bg="#2c3e50",
@@ -225,7 +222,7 @@ class Application(tk.Tk):
         )
         title.pack(fill="x")
 
-        self.path_frame = tk.Frame(self.root, padx=20, pady=10)
+        self.path_frame = tk.Frame(self, padx=20, pady=10)
         self.path_frame.pack(fill="x")
 
         tk.Label(self.path_frame, text="Input Folder:").grid(row=0, column=0, sticky=tk.W, pady=5)
@@ -237,7 +234,7 @@ class Application(tk.Tk):
         tk.Button(self.path_frame, text="Browse", command=self.browse_output).grid(row=1, column=2)
 
         self.mode_frame = tk.LabelFrame(
-            self.root,
+            self,
             text="Operation Mode",
             font=("Arial", 10, "bold"),
             padx=10,
@@ -263,7 +260,7 @@ class Application(tk.Tk):
             font=["Arial", 9],
         ).pack(anchor="w", pady=3)
 
-        self.search_frame = tk.Frame(self.root, padx=20, pady=10)
+        self.search_frame = tk.Frame(self, padx=20, pady=10)
         self.search_frame.pack(fill="x")
 
         tk.Label(self.search_frame, text="Search Name (First Last [Mi]):", font=["Arial", 9]).grid(
@@ -282,7 +279,7 @@ class Application(tk.Tk):
             row=1, column=1, padx=5, sticky="w"
         )
 
-        btn_frame = tk.Frame(self.root)
+        btn_frame = tk.Frame(self)
         btn_frame.pack(pady=5)
 
         self.start_button = tk.Button(
@@ -323,7 +320,7 @@ class Application(tk.Tk):
         )
         self.stop_button.pack(side="left", padx=5)
 
-        log_frame = tk.Frame(self.root, padx=20, pady=10)
+        log_frame = tk.Frame(self, padx=20, pady=10)
         log_frame.pack(fill="both", expand=True)
 
         tk.Label(log_frame, text="Processing Log:", font=("Arial", 10, "bold")).pack(anchor="w")
@@ -376,7 +373,7 @@ class Application(tk.Tk):
     def log(self, message):
         self.log_text.insert(tk.END, f"{message}\n")
         self.log_text.see(tk.END)
-        self.root.update_idletasks()
+        self.update_idletasks()
 
     def browse_input(self):
         folder = filedialog.askdirectory(title="Select Input Folder")
@@ -427,7 +424,7 @@ class Application(tk.Tk):
             messagebox.showerror("Error", str(e))
         finally:
             if self.mode.get() == "bulk":
-                self.root.after(0, self._reset_buttons)
+                self.after(0, self._reset_buttons)
 
     # ------------------------------------------------------------------
     # Search mode
@@ -479,7 +476,7 @@ class Application(tk.Tk):
         if not scores:
             self.log("No matching image(s) found.")
             messagebox.showerror("No Results", "No matching image(s) found.")
-            self.root.after(0, self._reset_buttons)
+            self.after(0, self._reset_buttons)
             return
 
         best = max(scores.values())
@@ -496,14 +493,14 @@ class Application(tk.Tk):
 
         if matches and not self._stop_event.is_set():
             self.log(f"Found {len(matches)} matching image(s)...")
-            self.root.after(0, self.show_preview_window, matches)
+            self.after(0, self.show_preview_window, matches)
         else:
             if self._stop_event.is_set():
                 self.log("Search stopped - no preview shown.")
             else:
                 self.log("No matching image(s) found.")
                 messagebox.showerror("No Results", "No matching image(s) found.")
-            self.root.after(0, self._reset_buttons)
+            self.after(0, self._reset_buttons)
 
     def filter_year(self, year, images):
         self.log(f"Filtering by year: {year}")
@@ -580,14 +577,14 @@ class Application(tk.Tk):
     # Preview window
     # ------------------------------------------------------------------
     def show_preview_window(self, matches):
-        self.preview_win = tk.Toplevel(self.root)
+        self.preview_win = tk.Toplevel(self)
         self.preview_win.title("Preview Matched Files")
-        self.preview_win.geometry(self.root.geometry())
+        self.preview_win.geometry(self.geometry())
         self.preview_win.resizable(True, True)
         self.preview_win.grab_set()
 
         def on_close():
-            self.root.after(0, self._reset_buttons)
+            self.after(0, self._reset_buttons)
             self.preview_win.destroy()
 
         self.preview_win.protocol("WM_DELETE_WINDOW", on_close)
@@ -718,7 +715,7 @@ class Application(tk.Tk):
                     "Success",
                     f"{len(selected)} file(s) successfully converted to PDF.",
                 )
-                self.root.after(0, self._reset_buttons)
+                self.after(0, self._reset_buttons)
 
             threading.Thread(target=run, daemon=True).start()
 
@@ -894,9 +891,8 @@ class Application(tk.Tk):
 
 
 def main():
-    root = tk.Tk()
-    app = Application(root)
-    root.mainloop()
+    app = Application()
+    app.mainloop()
 
 
 if __name__ == "__main__":
