@@ -9,8 +9,10 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 # Personal Dictionary for project
-/dictionaries/
+/.idea/dictionaries/
 # Inspection Profiles
 /inspectionProfiles/
 # App tests
 /test_app.py
+# Change log
+/CHANGELOG.md
