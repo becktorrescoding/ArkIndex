@@ -9,7 +9,7 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 # Personal Dictionary for project
-/.idea/dictionaries/
+/.idea/dictionaries/project.xml
 # Inspection Profiles
 /inspectionProfiles/
 # App tests
