@@ -11,6 +11,7 @@ Run the platform installer first if you haven't already:
 """
 
 import importlib
+import json
 import os
 import platform
 import re
@@ -205,6 +206,7 @@ class Application(tk.Tk):
         self._pause_event = threading.Event()
         self._pause_event.set()
         self._stop_event = threading.Event()
+        self._search_index = None
 
         self.create_widgets()
 
@@ -451,6 +453,10 @@ class Application(tk.Tk):
         total = len(all_files)
         self.log(f"Scanning {total} file(s)...")
 
+        index = self._load_index()
+        self._search_index = index
+        cache_hits = 0
+
         for i, file_path in enumerate(all_files, start=1):
             if self._check_pause_stop():
                 self.log("Search stopped by user.")
@@ -459,10 +465,16 @@ class Application(tk.Tk):
             image = os.path.basename(file_path)
             self.log(f"Scanning {i}/{total}: {image}")
             try:
-                img = self.open_as_image(file_path)
-                w, h = img.size
-                top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
-                text = pytesseract.image_to_string(top_third)
+                cached = self._get_cached_text(index, file_path)
+                if cached:
+                    text = cached
+                    cache_hits += 1
+                else:
+                    img = self.open_as_image(file_path)
+                    w, h = img.size
+                    top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
+                    text = pytesseract.image_to_string(top_third)
+                    self._index_entry(index, file_path, ocr_text=text)
                 matched_words = [
                     word for word in keywords if word.lower() in text.lower()
                 ]
@@ -475,6 +487,11 @@ class Application(tk.Tk):
                         self.log(f"~ {count}/{len(keywords)} keyword(s) matched: {file_path}")
             except Exception as e:
                 self.log(f"Error processing {file_path}: {e}")
+
+        self._save_index(index)
+        self._search_index = None
+        if total > 0:
+            self.log(f"Index cache hits: {cache_hits}/{total}")
 
         if not scores:
             self.log("No matching image(s) found.")
@@ -510,10 +527,14 @@ class Application(tk.Tk):
         filtered = []
         for file_path in images:
             try:
-                img = self.open_as_image(file_path)
-                w, h = img.size
-                top_third = img.crop((0, 0, w, h // 3))
-                text = pytesseract.image_to_string(top_third)
+                text = None
+                if self._search_index is not None:
+                    text = self._get_cached_text(self._search_index, file_path)
+                if text is None:
+                    img = self.open_as_image(file_path)
+                    w, h = img.size
+                    top_third = img.crop((0, 0, w, h // 3))
+                    text = pytesseract.image_to_string(top_third)
                 if year.lower() in text.lower():
                     filtered.append(file_path)
                 else:
@@ -620,7 +641,7 @@ class Application(tk.Tk):
 
         thumb_size = (160, 160)
         check_vars = []
-        thumb_refs = []
+        self.thumb_refs = []
 
         for file_path in matches:
             var = tk.BooleanVar(value=True)
@@ -637,7 +658,7 @@ class Application(tk.Tk):
                 img = Image.new("RGB", thumb_size, color=(180, 180, 180))
 
             tk_img = ImageTk.PhotoImage(img)
-            thumb_refs.append(tk_img)
+            self.thumb_refs.append(tk_img)
 
             tk.Label(
                 row,
@@ -760,7 +781,18 @@ class Application(tk.Tk):
         w, h = img.size
         top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
         text = pytesseract.image_to_string(top_third)
-        file_name, folder = self.generate_filename(text)
+        file_name, folder, degree_type, course, date_str, year_str = self.generate_filename(text)
+
+        # Update index with OCR text and conversion metadata
+        index = self._load_index()
+        self._index_entry(index, file_path,
+            ocr_text=text,
+            degree_type=degree_type,
+            course=course,
+            date=date_str,
+            year=year_str,
+            generated_filename=str(folder / file_name))
+        self._save_index(index)
 
         output_dir = Path(self.output_path.get()) / folder
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -789,6 +821,50 @@ class Application(tk.Tk):
                 force_ocr=True,
                 output_type="pdf",
             )
+
+    # ------------------------------------------------------------------
+    # Search index
+    # ------------------------------------------------------------------
+    def _index_path(self):
+        return os.path.join(self.output_path.get(), "file_index_python_search_engine.json")
+
+    def _load_index(self):
+        try:
+            with open(self._index_path()) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_index(self, index):
+        try:
+            with open(self._index_path(), "w") as f:
+                json.dump(index, f, indent=2)
+        except OSError as e:
+            self.log(f"Warning: could not save index: {e}")
+
+    def _get_cached_text(self, index, file_path):
+        abs_path = os.path.abspath(file_path)
+        entry = index.get(abs_path)
+        if entry is None:
+            return None
+        try:
+            if entry.get("mtime") != os.path.getmtime(file_path):
+                return None
+        except OSError:
+            return None
+        return entry.get("ocr_text")
+
+    def _index_entry(self, index, file_path, ocr_text=None, **kw):
+        abs_path = os.path.abspath(file_path)
+        entry = index.get(abs_path, {})
+        if ocr_text is not None:
+            entry["ocr_text"] = ocr_text
+        try:
+            entry["mtime"] = os.path.getmtime(file_path)
+        except OSError:
+            pass
+        entry.update(kw)
+        index[abs_path] = entry
 
     # ------------------------------------------------------------------
     # Filename generation
@@ -892,7 +968,7 @@ class Application(tk.Tk):
         # -- Assemble filename & folder -----------------------------
         if not date_str:
             self.log("  Could not extract date - routing to Error/Date.")
-            return clean(name), Path("Error/Date")
+            return clean(name), Path("Error/Date"), doc_folder, course_text, "", ""
         else:
             self.log(f"Found date: {date_str}")
 
@@ -900,7 +976,7 @@ class Application(tk.Tk):
         file_name = clean(f"{name} {program_part} {date_str}")
         folder = Path(doc_folder) / year_str
         self.log(f"File Name: {file_name}")
-        return file_name, folder
+        return file_name, folder, doc_folder, course_text, date_str, year_str
 
 
 def main():
