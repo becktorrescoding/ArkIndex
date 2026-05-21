@@ -371,6 +371,9 @@ class Application(tk.Tk):
     # Logging & browsing
     # ------------------------------------------------------------------
     def log(self, message):
+        if threading.current_thread() is not threading.main_thread():
+            self.after_idle(lambda m=message: self.log(m))
+            return
         self.log_text.insert(tk.END, f"{message}\n")
         self.log_text.see(tk.END)
         self.update_idletasks()
@@ -421,7 +424,7 @@ class Application(tk.Tk):
                 self.bulk_mode()
         except Exception as e:
             self.log(f"Error: {str(e)}")
-            messagebox.showerror("Error", str(e))
+            self.after(0, lambda e=e: messagebox.showerror("Error", str(e)))
         finally:
             if self.mode.get() == "bulk":
                 self.after(0, self._reset_buttons)
@@ -475,7 +478,7 @@ class Application(tk.Tk):
 
         if not scores:
             self.log("No matching image(s) found.")
-            messagebox.showerror("No Results", "No matching image(s) found.")
+            self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
             self.after(0, self._reset_buttons)
             return
 
@@ -499,7 +502,7 @@ class Application(tk.Tk):
                 self.log("Search stopped - no preview shown.")
             else:
                 self.log("No matching image(s) found.")
-                messagebox.showerror("No Results", "No matching image(s) found.")
+                self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
             self.after(0, self._reset_buttons)
 
     def filter_year(self, year, images):
@@ -571,7 +574,7 @@ class Application(tk.Tk):
         self.log("=" * 50)
 
         label = "Stopped" if stopped else "Complete"
-        messagebox.showinfo(label, f"Converted {converted} of {total_files} image(s).\nErrors: {errors}")
+        self.after(0, lambda l=label: messagebox.showinfo(l, f"Converted {converted} of {total_files} image(s).\nErrors: {errors}"))
 
     # ------------------------------------------------------------------
     # Preview window
@@ -610,7 +613,7 @@ class Application(tk.Tk):
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
         def on_canvas_configure(event):
-            self.canvas.itemconfig(canvas_window, width=event.width())
+            self.canvas.itemconfig(canvas_window, width=self.canvas.winfo_width())
 
         self.inner_frame.bind("<Configure>", on_frame_configure)
         self.canvas.bind("<Configure>", on_canvas_configure)
@@ -711,10 +714,10 @@ class Application(tk.Tk):
                 for f in selected:
                     self.convert_image(f)
                 self.log(f"Conversion complete - {len(selected)} file(s) converted")
-                messagebox.showinfo(
+                self.after(0, lambda: messagebox.showinfo(
                     "Success",
                     f"{len(selected)} file(s) successfully converted to PDF.",
-                )
+                ))
                 self.after(0, self._reset_buttons)
 
             threading.Thread(target=run, daemon=True).start()
@@ -752,6 +755,7 @@ class Application(tk.Tk):
         return Image.open(file_path)
 
     def convert_image(self, file_path):
+        self.log(f"Converting: {os.path.basename(file_path)}")
         img = self.open_as_image(file_path)
         w, h = img.size
         top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
@@ -819,7 +823,7 @@ class Application(tk.Tk):
         for pattern in (
             r"(Associate\s+in\s+(?:\S+\s*){1,2})",
             r"(Bachelor\s+of\s+Science\s+in\s+(?:\S+\s*){1,2})",
-            r"(Certificate\s+of\s+Graduation\s",
+            r"(Certificate\s+of\s+Graduation)",
         ):
             m = re.search(pattern, text, re.IGNORECASE)
             if m:
@@ -827,6 +831,7 @@ class Application(tk.Tk):
                 doc_folder = "Degree"
                 is_degree = True
                 break
+        self.log(f"Document Type: {doc_folder}")
 
         # -- Extract course (up to 9 words) -------------------------
         course_text = ""
@@ -859,6 +864,7 @@ class Application(tk.Tk):
                     else:
                         words = before_degree.split()
                         course_text = " ".join(words[-9:]).strip()
+            self.log(f"Course Found: {course_text}")
 
         # -- Extract date -------------------------------------------
         date_pattern = r"(" + _DATE_NAMED + r"|" + _DATE_NUMERIC + r")"
@@ -887,10 +893,13 @@ class Application(tk.Tk):
         if not date_str:
             self.log("  Could not extract date - routing to Error/Date.")
             return clean(name), Path("Error/Date")
+        else:
+            self.log(f"Found date: {date_str}")
 
         program_part = f" ({course_text})" if course_text else ""
         file_name = clean(f"{name} {program_part} {date_str}")
         folder = Path(doc_folder) / year_str
+        self.log(f"File Name: {file_name}")
         return file_name, folder
 
 
