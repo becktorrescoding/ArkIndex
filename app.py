@@ -10,6 +10,8 @@ Run the platform installer first if you haven't already:
   Linux   : bash install_linux.sh
 """
 
+import base64
+import gzip
 import importlib
 import json
 import os
@@ -907,8 +909,13 @@ class Application(tk.Tk):
         fd = self._lock_index(shared=True)
         try:
             with open(path) as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+                raw = f.read()
+            if not raw.strip():
+                return {}
+            decoded = base64.b64decode(raw)
+            decompressed = gzip.decompress(decoded)
+            return json.loads(decompressed)
+        except (FileNotFoundError, json.JSONDecodeError, base64.binascii.Error, OSError):
             return {}
         finally:
             self._unlock_index(fd)
@@ -917,9 +924,12 @@ class Application(tk.Tk):
         path = self._index_path()
         fd = self._lock_index(shared=False)
         try:
+            raw = json.dumps(index, indent=2).encode()
+            compressed = gzip.compress(raw)
+            encoded = base64.b64encode(compressed).decode()
             tmp = path + ".tmp"
             with open(tmp, "w") as f:
-                json.dump(index, f, indent=2)
+                f.write(encoded)
             os.replace(tmp, path)
         except OSError as e:
             self.log(f"Warning: could not save index: {e}")
