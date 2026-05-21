@@ -877,19 +877,54 @@ class Application(tk.Tk):
     def _index_path(self):
         return os.path.join(self.output_path.get(), "file_index_python_search_engine.json")
 
-    def _load_index(self):
+    def _lock_index(self, shared=False):
+        """Lock the index lock-file. Returns fd, raises on failure."""
+        lock_path = self._index_path() + ".lock"
+        fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+            fcntl.flock(fd, mode)
+        return fd
+
+    def _unlock_index(self, fd):
+        """Release a lock obtained by _lock_index."""
         try:
-            with open(self._index_path()) as f:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    def _load_index(self):
+        path = self._index_path()
+        fd = self._lock_index(shared=True)
+        try:
+            with open(path) as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
+        finally:
+            self._unlock_index(fd)
 
     def _save_index(self, index):
+        path = self._index_path()
+        fd = self._lock_index(shared=False)
         try:
-            with open(self._index_path(), "w") as f:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
                 json.dump(index, f, indent=2)
+            os.replace(tmp, path)
         except OSError as e:
             self.log(f"Warning: could not save index: {e}")
+        finally:
+            self._unlock_index(fd)
 
     def _get_cached_text(self, index, file_path):
         abs_path = os.path.abspath(file_path)
