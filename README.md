@@ -18,6 +18,10 @@ A Python GUI application that combines OCR-based document search with image-to-P
 - **Pause & Stop Controls**: Pause processing between files and resume at any time, or stop early — a summary of completed work is always shown
 - **Recursive Search**: Searches through entire directory structures
 - **User-Friendly**: Clear error messages, success notifications, and conversion summaries
+- **Search Index**: OCR results cached in the output folder so repeated searches skip re-OCR'ing unchanged files; shared across multiple application instances with file locking
+- **Expandable Previews**: Click any thumbnail to open a full-resolution view scaled to fit screen height
+- **Duplicate Handling**: When a destination PDF already exists, prompted with Replace / Append pages / Skip
+- **Cross-instance Safety**: Index file uses advisory file locking and atomic writes to prevent corruption when multiple instances access it simultaneously
 
 ## Prerequisites
 
@@ -188,8 +192,9 @@ The application features a clean, intuitive interface:
 5. (Optional) Enter graduation year for filtering
 6. Click "Start Search"
 7. Use **Pause** to suspend between files or **Stop** to cancel early
-8. Review matched files in the preview window and confirm conversion
-9. Receive success notification when complete
+8. Review matched files in the preview window; click any thumbnail to view full-size
+9. Confirm conversion; if a filename already exists, choose Replace / Append / Skip
+10. Receive success notification when complete
 
 **Bulk Convert Mode:**
 1. Select input folder containing images
@@ -249,7 +254,7 @@ The Processing Log window shows real-time status.
 
 **Search Mode example:**
 ```
-=== Starting Search Mode ===
+=== Starting Search ===
 Searching for John Smith
 Scanning 86 file(s)...
   Scanning 1/86: scan_001.jpg
@@ -257,49 +262,41 @@ Scanning 86 file(s)...
   ✓ Match found: scan_002.jpg
   Scanning 3/86: scan_003.jpg
 ...
-No exact matches found. Trying partial match...
-Scanning 86 file(s) for partial matches...
-  Scanning 1/86: scan_001.jpg
-  Scanning 2/86: scan_002.jpg
-  ~ 1/2 keyword(s) matched: scan_002.jpg
-  Scanning 3/86: scan_003.jpg
-  ~ 2/2 keyword(s) matched: scan_003.jpg
-...
-  ✓ Best match: 2/2 keyword(s) — 1 file(s)
+Best match: 2/2 keyword(s) — 1 file(s)
 Filtering by year: 98
-Found 1 matching file(s). Opening preview...
+Found 1 matching image(s)...
 [Preview window opens — user confirms selection]
-Converting scan_003.jpg to PDF...
-  📄 Generated filename: Smith_John_Transcript_March_3_1975.pdf
-✓ Successfully converted to: Smith_John_Transcript_March_3_1975.pdf
-Conversion complete — 1 file(s) converted.
+Converting: scan_003.jpg
+  Document Type: Transcript
+  Found date: March 03, 1975
+  File Name: Smith_John_Transcript_March_03_1975
+Conversion complete - 1 file(s) converted
 ```
 
 **Bulk Convert Mode example:**
 ```
-=== Starting Bulk Convert Mode ===
-Found 42 image(s) to convert.
+=== Starting Bulk mode ===
+Found 42 images to convert...
 
 Converting: scan_001.jpg
-  📄 Generated filename: Smith_John_A_Bachelor_of_Commerce_June_12_1979.pdf
-  ✓ Success (1/42)
+  Document Type: Degree
+  Course Found: Mechanical Engineering
+  Found date: June 12, 1979
+  File Name: Smith_John_A._(Mechanical_Engineering)_June_12_1979
 
 Converting: scan_002.png
-  📄 Generated filename: Doe_Jane_Transcript_March_3_1975.pdf
-  ✓ Success (2/42)
-
-Converting: scan_003.jpg
-  ⚠ Could not detect document type — using original filename.
-  ✓ Success (3/42)
+  Document Type: Transcript
+  Found date: March 03, 1975
+  File Name: Doe_Jane_March_03_1975
 ...
-⏸ Paused — click Resume to continue.
-▶ Resumed.
+Paused - click Resume to continue.
+Resumed
 ...
-⏹ Stop requested — finishing current file...
-⏹ Stopped by user.
+Stop requested - finishing current file...
+Stopped by user.
 ==================================================
 Bulk conversion stopped by user.
-Successfully converted: 12/42
+Successfully converted 12 / 42 image(s).
 Errors: 0
 ==================================================
 ```
@@ -325,6 +322,9 @@ If no exact match is found, it automatically tries partial matching:
 
 **Year Filtering:**
 If you enter a year, matched files are filtered to only those containing that year in their text.
+
+**Search Index:**
+OCR results from previous searches are cached in `file_index_python_search_engine.json` inside the output folder. Repeated searches skip re-OCR'ing files that haven't changed. The index is shared safely across multiple running instances via file locking and atomic writes.
 
 ---
 
@@ -357,30 +357,7 @@ If you enter a year, matched files are filtered to only those containing that ye
 The application uses a **class-based tkinter GUI** with the following structure:
 
 ```
-Application (Main Class, inherits tk.Tk)
-├── __init__()              # Initialize window and variables
-├── create_widgets()        # Build GUI interface
-├── toggle_pause()          # Pause or resume processing
-├── request_stop()          # Signal worker thread to stop after current file
-── _check_pause_stop()     # Called between files; blocks while paused, returns True if stopped
-├── _reset_buttons()        # Re-enable Start and disable Pause/Stop
-├── toggle_mode()           # Show/hide search fields based on mode
-├── browse_input()          # Handle input folder selection
-├── browse_output()         # Handle output folder selection
-── start()                 # Validate inputs and start thread
-├── route_mode()            # Route to correct mode (runs in thread)
-├── search_mode()           # Search Mode workflow
-├── matches_found()         # Handle search results and year filtering
-├── filter_year()           # Filter matched files by year
-├── bulk_mode()             # Bulk Convert Mode workflow
-├── show_preview_window()   # Preview matched files before converting
-├── open_as_image()         # Open image or PDF first page as PIL Image (via PyMuPDF)
-├── convert_image()         # Convert single image to searchable PDF
-├── generate_filename()     # Extract fields from OCR text and build filename
-│   └── extract_course_name()  # Extract course name (up to 9 words) from OCR text
-└── log()                   # Display messages in GUI
-```
-ImageToPDFApp (Main Class)
+Application (tk.Tk)
 ├── __init__()              # Initialize window and variables
 ├── create_widgets()        # Build GUI interface
 ├── toggle_pause()          # Pause or resume processing
@@ -390,18 +367,25 @@ ImageToPDFApp (Main Class)
 ├── toggle_mode()           # Show/hide search fields based on mode
 ├── browse_input()          # Handle input folder selection
 ├── browse_output()         # Handle output folder selection
-├── start_search()          # Validate inputs and start thread
-├── do_search()             # Route to correct mode (runs in thread)
+├── start()                 # Validate inputs and start thread
+├── route_mode()            # Route to correct mode (runs in thread)
 ├── search_mode()           # Search Mode workflow
+├── matches_found()         # Handle search results and year filtering
+├── filter_year()           # Filter matched files by year
+├── bulk_mode()             # Bulk Convert Mode workflow
 ├── show_preview_window()   # Preview matched files before converting
-├── bulk_convert_mode()     # Bulk Convert Mode workflow
-├── open_as_image()         # Open image or PDF first page as PIL Image
-├── search_folders()        # Exact text match via OCR (name region only)
-├── search_fallback()       # Partial keyword matching (name region only, best-count wins)
-├── search_images()         # Filter by year
-├── generate_filename()     # Extract fields from OCR text and build filename
+├── _show_large_preview()   # Full-size preview on thumbnail click
+├── open_as_image()         # Open image or PDF first page as PIL Image (via PyMuPDF)
 ├── convert_image()         # Convert single image to searchable PDF
-└── log()                   # Display messages in GUI
+├── _prompt_replace_or_append()  # Prompt user on duplicate filename
+├── generate_filename()     # Extract fields from OCR text and build filename
+├── _load_index()           # Load search index from disk
+├── _save_index()           # Save search index to disk
+├── _get_cached_text()      # Retrieve cached OCR text if mtime matches
+├── _index_entry()          # Add/update entry in search index
+├── _lock_index()           # Acquire file lock for index access
+├── _unlock_index()         # Release file lock
+└── log()                   # Display messages in GUI (thread-safe)
 ```
 
 ### Automatic Filename Generation (Search Mode)
@@ -410,9 +394,9 @@ When a document is converted in Search Mode, the output PDF is automatically nam
 
 **Degree format:**
 ```
-Last, First [MI.] (Course Degree) Month DD, YYYY
+Last, First [MI.] (Course) Month DD, YYYY
 ```
-Example: `Doe, John A. (Mechanical Engineering Bachelor of Science) May 20, 1998.pdf`
+Example: `Doe, John A. (Mechanical Engineering) May 20, 1998.pdf`
 
 **Transcript format:**
 ```
@@ -426,7 +410,7 @@ Example: `Doe, John A. March 03, 1975.pdf`
 3. **Course extraction** (degrees only): Looks for the course name in two locations:
    - Text immediately before the degree keyword on the same line (up to 9 words)
    - If the line contains "Graduated-Received", checks two lines above the degree for a "Course:" label
-4. Extracts the relevant date — graduation date for degrees, admission date for transcripts
+4. Extracts the relevant date — graduation date for degrees, admission date for transcripts. Context-based ("Degree: ..." / "date of admission: ...") and generic date patterns are combined and deduplicated. Invalid date-like strings (e.g. OCR noise like "34-65-5413") are automatically rejected with a retry loop.
 5. Normalizes dates to a consistent `Month DD, YYYY` format regardless of how they appear in the document — both `June 12, 1979` and `06/12/79` will produce `June 12, 1979`. 2-digit years are expanded automatically (`79` → `1979`, years `00–19` are assumed to be 2000s)
 6. Assembles the parts into a clean filename, stripping invalid characters
 
@@ -438,13 +422,15 @@ If the date cannot be extracted, a warning is logged and the file is routed to a
 1. **User Input**: User enters name and optional year via GUI fields
 2. **Validation**: System checks all required fields are filled
 3. **Threading**: Search runs in background thread (GUI stays responsive); Pause and Stop buttons become active
-4. **OCR Processing**: The name region of each file is processed with Tesseract OCR (faster and more precise than full-page OCR)
-5. **Text Matching**: Extracted name text is compared against search criteria
-6. **Fallback**: If no exact match, automatically tries partial matching — returns the file(s) with the most keyword hits
-7. **Filtering**: Optional year filter applied if provided
-8. **Preview**: Matched files displayed as thumbnails in a preview window — user selects which to convert
-9. **Conversion**: Selected file(s) converted to PDF with OCRmyPDF
-10. **Notification**: User notified of success/failure
+4. **Index Check**: Before OCR'ing each file, the search index is consulted. If a cached OCR text exists and the file hasn't been modified, OCR is skipped entirely
+5. **OCR Processing**: The name region of each file is processed with Tesseract OCR (faster and more precise than full-page OCR)
+6. **Index Update**: Newly OCR'd results are stored in the index and saved to disk
+7. **Text Matching**: Extracted text is compared against search criteria
+8. **Fallback**: If no exact match, automatically tries partial matching — returns the file(s) with the most keyword hits
+9. **Filtering**: Optional year filter applied if provided (also benefits from the index cache)
+10. **Preview**: Matched files displayed as thumbnails in a preview window. Click any thumbnail to open a full-resolution view. Select which files to convert via checkboxes.
+11. **Conversion**: Selected file(s) converted to searchable PDF with OCRmyPDF. If a destination filename already exists, the user is prompted: Replace / Append pages / Skip.
+12. **Notification**: User notified of success/failure
 
 ### Bulk Convert Mode Workflow
 
@@ -452,10 +438,28 @@ If the date cannot be extracted, a warning is logged and the file is routed to a
 2. **File Discovery**: Recursively counts all valid image files in input folder
 3. **Threading**: Conversion runs in background thread (GUI stays responsive); Pause and Stop buttons become active
 4. **Batch Conversion**: Each image converted to searchable PDF with OCRmyPDF; pause/stop is checked between every file
-5. **Progress Tracking**: Log shows per-file results and running count (X/total)
-6. **Error Handling**: Individual file errors are logged; processing continues
-7. **Early Stop**: If stopped by user, summary reports how many files completed before stopping
-8. **Summary**: Completion dialog reports total converted and error count
+5. **Index Update**: Converted file metadata (OCR text, degree type, course, date, generated filename) is stored in the search index
+6. **Progress Tracking**: Log shows per-file results and running count (X/total)
+7. **Error Handling**: Individual file errors are logged; processing continues
+8. **Early Stop**: If stopped by user, summary reports how many files completed before stopping
+9. **Summary**: Completion dialog reports total converted and error count
+
+### Search Index
+
+- **Location**: `file_index_python_search_engine.json` inside the output folder
+- **Content**: Base64 + gzip encoded JSON mapping file paths to OCR text, degree type, course, date, year, generated filename, and file modification timestamp
+- **Cache Invalidation**: If a source file's modification time changes, it is automatically re-OCR'd on the next search
+- **Cross-instance Safety**: Uses `fcntl.flock` (Unix) / `msvcrt.locking` (Windows) with shared locks for reads and exclusive locks for writes. Index content is written atomically (write to `.tmp`, then `os.replace()`)
+- **Utility Script**: Run `python decode_index.py <path-to-index>` to decode the index to human-readable JSON
+
+### Duplicate File Handling
+
+When `convert_image()` detects that the destination PDF already exists, it prompts the user with a three-button dialog:
+- **Yes** (Replace) — overwrites the existing file
+- **No** (Append) — merges the new pages into the existing PDF
+- **Cancel** (Skip) — leaves the existing file untouched
+
+The prompt is synchronized from the background thread to the main thread so the GUI remains responsive.
 
 ### Technical Details
 
@@ -463,7 +467,9 @@ If the date cannot be extracted, a warning is logged and the file is routed to a
 - **PDF Creation**: OCRmyPDF creates searchable PDFs with deskewing and forced OCR
 - **PDF Rendering**: PyMuPDF (fitz) renders PDF pages as images for preview and processing
 - **Threading**: `threading.Thread` prevents GUI freezing during processing; `threading.Event` objects (`_pause_event`, `_stop_event`) coordinate pause and stop signals between the GUI and worker thread
+- **Logging**: Thread-safe via `after_idle()` deferral to the main thread
 - **File Handling**: `pathlib.Path` for cross-platform path management
+- **Index Encoding**: gzip compressed + base64 encoded to prevent casual reading outside the application
 - **Error Handling**: Try-except blocks catch and log errors gracefully
 
 ### Supported File Types
@@ -477,14 +483,14 @@ If the date cannot be extracted, a warning is logged and the file is routed to a
 ## Output
 
 ### Search Mode — Success
-- **Preview Window**: All matched files shown as thumbnails with checkboxes; user selects which to convert
+- **Preview Window**: All matched files shown as thumbnails with checkboxes; click any thumbnail for full-size preview
 - **Searchable PDFs**: Selected document(s) saved to output folder with auto-generated structured filenames
 - **Log Messages**: Real-time progress shown in GUI log window
 - **Success Dialog**: Pop-up notification confirms how many files were converted
 
 ### Bulk Convert Mode — Success
-- **Searchable PDFs**: All converted documents saved to output folder with auto-generated structured filenames (falls back to original filename if document type cannot be detected)
-- **Progress Log**: Per-file status showing generated filename and running count (e.g., `✓ Success (12/42)`)
+- **Searchable PDFs**: All converted documents saved to output folder with auto-generated structured filenames (falls back to `Error/Date` routing if date cannot be extracted)
+- **Progress Log**: Per-file status showing generated filename and running count
 - **Summary Dialog**: Reports total files converted and number of errors
 
 ### No Matches Case (Search Mode)
@@ -492,7 +498,7 @@ If the date cannot be extracted, a warning is logged and the file is routed to a
 - **Log Details**: Shows search attempts and why no matches were found
 
 ### Stopped by User
-- **Log Message**: `⏹ Stopped by user.` appears in the log
+- **Log Message**: `Stopped by user.` appears in the log
 - **Summary Dialog**: Reports how many files were converted before stopping
 - **Start Button**: Re-enabled immediately so a new operation can begin
 
@@ -549,9 +555,9 @@ This makes the tool suitable for handling sensitive documents such as university
 ## Limitations
 
 - **OCR Accuracy**: Depends on image quality, text clarity, and scan resolution
-- **Processing Speed**: Large directories or high-resolution images can be slow
+- **Processing Speed**: Large directories or high-resolution images can be slow; the search index mitigates repeated OCR for unchanged files
 - **Network Drives**: May be slower than local storage; consider copying files locally first
-- **Filename generation accuracy**: Auto-naming relies on OCR quality — poor scans may fall back to minimal naming
+- **Filename generation accuracy**: Auto-naming relies on OCR quality — poor scans may fall back to `Error/Date` routing
 - **Year Format**: Searches for year as a text string in OCR output; works with both 2-digit and 4-digit years depending on what appears in the document
 - **Memory Usage**: Processing very large images may consume significant RAM
 
@@ -629,22 +635,16 @@ Potential improvements for future versions:
 ### GUI Improvements
 - **Save/Load Settings**: Remember last used folders and mode
 - **Theme Selection**: Light/dark mode options
-- **Drag & Drop**: Drop files directly into window (part of new functionality)
-- ~~**Pause/Stop Controls**: Ability to pause or cancel processing mid-run~~ ✅ Implemented
-- ~~**Multi-file Conversion**: Convert all matched files in Search Mode~~ ✅ Implemented
-- ~~**Preview Pane**: Show thumbnail of found images before converting~~ ✅ Implemented
+- **Drag & Drop**: Drop files directly into window
 
 ### Functionality
-- ~~**Advanced Search**: Search by multiple criteria (name AND date range)~~ ✅ Implemented
 - **Custom Match Threshold**: Slider to adjust partial match percentage
 - **Export Results**: Save list of matched/converted files to CSV/Excel
 - **Batch Processing**: Queue multiple searches to run sequentially
-- ~~**Preserve Subdirectory Structure**: Mirror input folder structure in bulk output~~ Rigid output file structure made
 - **Bulk Output Naming**: Custom naming conventions for bulk converted files
 
 ### Performance
 - **Parallel Processing**: Multi-threaded conversion for multiple files in bulk mode
-- **Image Caching**: Cache OCR results to speed up repeated searches
 - **Smart Scanning**: Skip previously converted files
 - **Low-res Preview**: Quick preview mode before full OCR
 
