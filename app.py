@@ -660,13 +660,19 @@ class Application(tk.Tk):
             tk_img = ImageTk.PhotoImage(img)
             self.thumb_refs.append(tk_img)
 
-            tk.Label(
+            tk_label = tk.Label(
                 row,
                 image=tk_img,
                 bg="#f0f0f0",
                 relief="solid",
                 bd=1,
-            ).pack(side="left", padx=(0, 10))
+                cursor="hand2",
+            )
+            tk_label.pack(side="left", padx=(0, 10))
+            tk_label.bind(
+                "<Button-1>",
+                lambda e, fp=file_path: self._show_large_preview(fp),
+            )
 
             info_frame = tk.Frame(row, bg="#f0f0f0")
             info_frame.pack(side="left", fill="both", expand=True)
@@ -761,6 +767,49 @@ class Application(tk.Tk):
             width=10,
             height=2,
         ).pack(side="right")
+
+    def _show_large_preview(self, file_path):
+        try:
+            img = self.open_as_image(file_path)
+        except Exception as e:
+            messagebox.showerror("Preview Error", f"Could not open image:\n{e}", parent=self.preview_win)
+            return
+
+        win = tk.Toplevel(self.preview_win)
+        win.title(os.path.basename(file_path))
+        win.resizable(True, True)
+
+        max_w = min(img.width, 1200)
+        max_h = min(img.height, 900)
+        if img.width > max_w or img.height > max_h:
+            img.thumbnail((max_w, max_h))
+        else:
+            img = img.copy()
+
+        tk_img = ImageTk.PhotoImage(img)
+        refs = [tk_img]
+
+        def _cleanup():
+            refs.clear()
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", _cleanup)
+
+        tk.Label(
+            win,
+            image=tk_img,
+            bg="#f0f0f0",
+            relief="solid",
+            bd=1,
+        ).pack(padx=10, pady=10)
+
+        tk.Label(
+            win,
+            text=file_path,
+            font=["Arial", 8],
+            fg="#555",
+            wraplength=min(img.width, 1200),
+        ).pack(padx=10, pady=(0, 10))
 
     # ------------------------------------------------------------------
     # Image / PDF helpers
