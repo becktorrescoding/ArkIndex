@@ -16,3 +16,5 @@
 /test_app.py
 # Change log
 /CHANGELOG.md
+# Decryption for Json index
+/decode_index.py
