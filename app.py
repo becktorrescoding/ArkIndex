@@ -403,7 +403,7 @@ class Application(tk.Tk):
                 return
 
         self._stop_event.clear()
-        self._pause_event.clear()
+        self._pause_event.set()
         self.start_button.config(state="disabled")
         self.pause_button.config(state="normal", text="Pause", bg="#e67e00")
         self.stop_button.config(state="normal")
