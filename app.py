@@ -597,7 +597,10 @@ class Application(tk.Tk):
         self.log("=" * 50)
 
         label = "Stopped" if stopped else "Complete"
-        self.after(0, lambda l=label: messagebox.showinfo(l, f"Converted {converted} of {total_files} image(s).\nErrors: {errors}"))
+        details = f"Converted {converted} of {total_files} image(s)."
+        if errors:
+            details += f"\nErrors: {errors}"
+        self.after(0, lambda l=label: messagebox.showinfo(l, details))
 
     # ------------------------------------------------------------------
     # Preview window
@@ -740,12 +743,14 @@ class Application(tk.Tk):
             self.preview_win.destroy()
 
             def run():
+                done = 0
                 for f in selected:
                     self.convert_image(f)
-                self.log(f"Conversion complete - {len(selected)} file(s) converted")
+                    done += 1
+                self.log(f"Conversion complete - {done} file(s) converted")
                 self.after(0, lambda: messagebox.showinfo(
                     "Success",
-                    f"{len(selected)} file(s) successfully converted to PDF.",
+                    f"{done} file(s) successfully converted to PDF.",
                 ))
                 self.after(0, self._reset_buttons)
 
@@ -826,6 +831,34 @@ class Application(tk.Tk):
             return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         return Image.open(file_path)
 
+    def _prompt_replace_or_append(self, file_name):
+        """Ask user what to do with a duplicate destination filename.
+        Blocks calling thread; runs dialog on main thread.
+        Returns 'replace', 'append', or 'skip'."""
+        result = [None]
+        event = threading.Event()
+
+        def ask():
+            ans = messagebox.askyesnocancel(
+                "File Exists",
+                f"File already exists:\n{file_name}\n\n"
+                f"Yes  = Replace existing file\n"
+                f"No   = Append (merge) pages\n"
+                f"Cancel = Skip this file",
+                parent=self,
+            )
+            if ans is True:
+                result[0] = "replace"
+            elif ans is False:
+                result[0] = "append"
+            else:
+                result[0] = "skip"
+            event.set()
+
+        self.after(0, ask)
+        event.wait()
+        return result[0]
+
     def convert_image(self, file_path):
         self.log(f"Converting: {os.path.basename(file_path)}")
         img = self.open_as_image(file_path)
@@ -850,6 +883,22 @@ class Application(tk.Tk):
         output_file = output_dir / f"{file_name}.pdf"
 
         if output_file.exists():
+            choice = self._prompt_replace_or_append(output_file.name)
+            if choice == "skip":
+                self.log("  Skipped.")
+                return True
+            if choice == "replace":
+                ocrmypdf.ocr(
+                    file_path,
+                    output_file,
+                    deskew=True,
+                    force_ocr=True,
+                    output_type="pdf",
+                )
+                self.log("  Replaced.")
+                return True
+
+            # append
             temp_file = output_dir / "temp.pdf"
             ocrmypdf.ocr(
                 file_path,
@@ -864,6 +913,7 @@ class Application(tk.Tk):
             main_doc.close()
             temp_doc.close()
             os.remove(temp_file)
+            self.log("  Appended.")
         else:
             ocrmypdf.ocr(
                 file_path,
