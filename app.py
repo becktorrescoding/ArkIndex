@@ -152,6 +152,8 @@ def _parse_date_to_tuple(raw: str) -> tuple:
     m = re.match(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$", raw)
     if m:
         month, day, year = int(m.group(1)), int(m.group(2)), m.group(3)
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            return 9999, 99, 99
         if len(year) == 2:
             year = "19" + year
         return int(year), month, day
@@ -1101,19 +1103,27 @@ class Application(tk.Tk):
 
         raw_dates = [
             m.group(1) for m in re.finditer(context_pat, text, re.IGNORECASE)
+        ] + [
+            m.group(0) for m in re.finditer(date_pattern, text, re.IGNORECASE)
         ]
-
-        if not raw_dates:
-            raw_dates = [
-                m.group(0) for m in re.finditer(date_pattern, text, re.IGNORECASE)
-            ]
+        seen = set()
+        raw_dates = [d for d in raw_dates if not (d in seen or seen.add(d))]
 
         date_str = year_str = ""
         if raw_dates:
             sorted_dates = sort_dates_chronologically(raw_dates)
-            date_str, year_str = _normalise_date(sorted_dates[-1])
-            if date_str is None:
-                self.log("  Could not normalise extracted date.")
+            rejected_dates = 0
+            while sorted_dates:
+                try:
+                    date_str, year_str = _normalise_date(sorted_dates[-1])
+                except Exception:
+                    rejected_dates += 1
+                    self.log(f"Rejected dates count: {rejected_dates}")
+                    date_str = None
+                if date_str is not None:
+                    self.log(f"  Accepted: {sorted_dates[-1]!r} -> {date_str!r}")
+                    break
+                sorted_dates.pop()
 
         # -- Assemble filename & folder -----------------------------
         if not date_str:
