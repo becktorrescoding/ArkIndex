@@ -33,6 +33,7 @@ from tkinter import filedialog, messagebox, scrolledtext
 # Dependency checks
 # ---------------------------------------------------------------------------
 
+
 def _check_python_version():
     if sys.version_info < (3, 9):
         print(
@@ -600,7 +601,7 @@ class Application(tk.Tk):
         details = f"Converted {converted} of {total_files} image(s)."
         if errors:
             details += f"\nErrors: {errors}"
-        self.after(0, lambda l=label: messagebox.showinfo(l, details))
+        self.after(0, lambda lbl=label: messagebox.showinfo(lbl, details))
 
     # ------------------------------------------------------------------
     # Preview window
@@ -786,14 +787,17 @@ class Application(tk.Tk):
         win.title(os.path.basename(file_path))
         win.resizable(True, True)
 
-        max_w = min(img.width, 1200)
-        max_h = min(img.height, 900)
-        if img.width > max_w or img.height > max_h:
-            img.thumbnail((max_w, max_h))
+        screen_h = win.winfo_screenheight()
+        max_display_h = screen_h - 120
+        if img.height > max_display_h:
+            ratio = max_display_h / img.height
+            new_w = int(img.width * ratio)
+            new_h = int(img.height * ratio)
+            display_img = img.resize((new_w, new_h), Image.LANCZOS)
         else:
-            img = img.copy()
+            display_img = img.copy()
 
-        tk_img = ImageTk.PhotoImage(img)
+        tk_img = ImageTk.PhotoImage(display_img)
         refs = [tk_img]
 
         def _cleanup():
@@ -815,7 +819,7 @@ class Application(tk.Tk):
             text=file_path,
             font=["Arial", 8],
             fg="#555",
-            wraplength=min(img.width, 1200),
+            wraplength=display_img.width,
         ).pack(padx=10, pady=(0, 10))
 
     # ------------------------------------------------------------------
@@ -869,13 +873,15 @@ class Application(tk.Tk):
 
         # Update index with OCR text and conversion metadata
         index = self._load_index()
-        self._index_entry(index, file_path,
+        self._index_entry(
+            index, file_path,
             ocr_text=text,
             degree_type=degree_type,
             course=course,
             date=date_str,
             year=year_str,
-            generated_filename=str(folder / file_name))
+            generated_filename=str(folder / file_name),
+        )
         self._save_index(index)
 
         output_dir = Path(self.output_path.get()) / folder
