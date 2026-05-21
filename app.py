@@ -807,10 +807,10 @@ class Application(tk.Tk):
         name = self.search_name.get().strip()
         if len(name.split()) == 3:
             first, last, middle = name.split()
-            name = last + " " + first + " " + middle + "."
+            name = last + ", " + first + " " + middle + "."
         else:
             first, last = name.split()
-            name = last + " " + first
+            name = last + ", " + first
 
         # -- Detect document type & degree --------------------------
         is_degree = False
@@ -863,7 +863,7 @@ class Application(tk.Tk):
         # -- Extract date -------------------------------------------
         date_pattern = r"(" + _DATE_NAMED + r"|" + _DATE_NUMERIC + r")"
         if is_degree:
-            context_pat = r"degree\s+received[^\n]*?" + date_pattern
+            context_pat = r"Degree[:\s]*?" + date_pattern
         else:
             context_pat = r"date\s+of\s+admission[:\s]+" + date_pattern
 
@@ -889,7 +889,7 @@ class Application(tk.Tk):
             return clean(name), Path("Error/Date")
 
         program_part = f" ({course_text})" if course_text else ""
-        file_name = clean(f"{name}{program_part} {date_str}")
+        file_name = clean(f"{name} {program_part} {date_str}")
         folder = Path(doc_folder) / year_str
         return file_name, folder
 
