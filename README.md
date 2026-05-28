@@ -29,14 +29,29 @@ A Python GUI application that combines OCR-based document search with image-to-P
 
 1. **Python 3.9+** — Download from [python.org](https://www.python.org/downloads/)
 2. **Tesseract OCR** — See installation instructions below
-3. **Poppler** — Required for PDF rendering; see installation instructions below
-4. **Python packages** — `ocrmypdf`, `pytesseract`, `pillow`, `pymupdf`
+3. **Python packages** — `ocrmypdf`, `pytesseract`, `pillow`, `pymupdf`
 
 ---
 
 ## Installation
 
-#### Below is the manual installation method. Use the dedicated platform installer before attempting to install dependencies manually.
+### Recommended: Platform Installer
+
+For the quickest setup, run the platform-specific installer. It handles Python, Tesseract, Ghostscript, and all Python packages automatically.
+
+| Platform | Command |
+|----------|---------|
+| **Windows** | `install_windows.bat` (double-click or run in terminal) |
+| **macOS**   | `bash install_macos.sh` |
+| **Linux**   | `bash install_linux.sh` |
+
+If your system is missing required tools, the installer will attempt to install them. On Windows, it uses `winget` when available and falls back to direct downloads otherwise.
+
+---
+
+### Manual Installation
+
+If the platform installer is not suitable for your environment, follow the steps below.
 
 ---
 
@@ -122,46 +137,13 @@ Or download and extract the ZIP from the GitHub page.
 
 ---
 
----
-
-### 3. Install Poppler
-
-Poppler is required for PDF rendering during search. It is **not** a Python package and must be installed separately.
-
-#### Windows
-
-1. Install Poppler via [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/):
-   ```bash
-   winget install oschwartz10612.poppler
-   ```
-2. **Verify** by opening a new Command Prompt and running:
-   ```bash
-   pdftoppm -v
-   ```
-
-#### macOS
-
-```bash
-brew install poppler
-```
-
-#### Linux (Debian/Ubuntu)
-
-```bash
-sudo apt-get install poppler-utils
-```
-
-> **Note**: For other distributions use `sudo dnf install poppler-utils` (Fedora) or `sudo pacman -S poppler` (Arch).
-
----
-
-### 4. Install Python Dependencies
+### 3. Install Python Dependencies
 
 ```bash
 pip install ocrmypdf pytesseract pillow pymupdf
 ```
 
-### 5. Launch the Application
+### 4. Launch the Application
 
 ```bash
 python app.py
@@ -310,15 +292,18 @@ Errors: 0
 
 ### Search Behavior
 
-**Exact Match First:**
-The application searches for the exact name you entered in image text (via OCR).
+**Keyword Matching:**
+The application searches for the name you enter using whole-word matching:
+- Splits your search into keywords (e.g., `"John Freeman"` → `["John", "Freeman"]`)
+- Uses `\b` word boundaries so `"Pete"` does not match `"Peter"`
+- Rejects matches where the keyword is preceded by a digit on the same line (e.g., `"123 Freeman"` in an address is skipped)
+- Returns the file(s) with the **highest keyword score** — all ties are kept and shown in the preview
 
-**Automatic Fallback:**
-If no exact match is found, it automatically tries partial matching:
-- Splits your search into keywords (e.g., "John Smith" → ["John", "Smith"])
-- Scores every file by how many keywords appear in the name region
-- Returns only the file(s) with the **highest keyword count** — all ties are kept and shown in the preview
-- Example: if two files each match 2 out of 3 keywords and no file matches all 3, both are returned
+**Name-Context Scoring:**
+Keywords are also checked for proximity to name labels (`Name:`, `Student Name:`, `Student:`, `Applicant Name:`):
+- Matches near a name label receive a multiplier (`name_ctx × 1000 + total_matches`)
+- This ensures `"Freeman"` under a `Name:` field outranks `"Freeman"` appearing in body text
+- Example: if two files match 2 keywords but only one has those keywords in the name region, the latter wins
 
 **Year Filtering:**
 If you enter a year, matched files are filtered to only those containing that year in their text.
@@ -379,6 +364,10 @@ Application (tk.Tk)
 ├── convert_image()         # Convert single image to searchable PDF
 ├── _prompt_replace_or_append()  # Prompt user on duplicate filename
 ├── generate_filename()     # Extract fields from OCR text and build filename
+├── _extract_name()         # Pull student name from OCR via name labels
+├── _format_name()          # Parse 'Last, First' or 'First Last' into standard form
+├── _has_valid_match()      # Whole-word match rejecting digit-preceded occurrences
+├── _in_name_context()      # Check if keyword appears near a name label
 ├── _load_index()           # Load search index from disk
 ├── _save_index()           # Save search index to disk
 ├── _get_cached_text()      # Retrieve cached OCR text if mtime matches
@@ -400,22 +389,24 @@ Example: `Doe, John A. (Mechanical Engineering) May 20, 1998.pdf`
 
 **Transcript format:**
 ```
-Last, First [MI.] Month DD, YYYY
+Last, First [MI.] (Course) Month DD, YYYY
 ```
-Example: `Doe, John A. March 03, 1975.pdf`
+Example: `Doe, John A. (Computer Science) March 03, 1975.pdf`
 
 **How it works:**
 1. Detects document type by looking for degree patterns (`Associate in`, `Bachelor of Science in`, `Certificate of Graduation`) or transcript markers (`date of admission`)
-2. Extracts the student name from user input; appends a period if a middle initial is present
-3. **Course extraction** (degrees only): Looks for the course name in two locations:
+2. Extracts the student name from OCR text using name labels (`Name:`, `Student Name:`, `Student:`, `Applicant Name:`), supporting both `"Last, First Mi"` and `"First Mi Last"` formats. Falls back to the search-field entry if OCR extraction returns nothing. Routes to `Error/Name` if name cannot be determined.
+3. **Course extraction**: Looks for the course name on degree documents in two locations:
    - Text immediately before the degree keyword on the same line (up to 9 words)
    - If the line contains "Graduated-Received", checks two lines above the degree for a "Course:" label
-4. Extracts the relevant date — graduation date for degrees, admission date for transcripts. Context-based ("Degree: ..." / "date of admission: ...") and generic date patterns are combined and deduplicated. Invalid date-like strings (e.g. OCR noise like "34-65-5413") are automatically rejected with a retry loop.
-5. Normalizes dates to a consistent `Month DD, YYYY` format regardless of how they appear in the document — both `June 12, 1979` and `06/12/79` will produce `June 12, 1979`. 2-digit years are expanded automatically (`79` → `1979`, years `00–19` are assumed to be 2000s)
-6. Assembles the parts into a clean filename, stripping invalid characters
+   - For **transcripts**, scans for `Program:`, `Major:`, `Course:`, `Field of Study:`, or `Curriculum:` labels
+4. Skips student-number text (`Student No.`, `Student #`, `Student ID`) that may appear on the same line as the name label
+5. Extracts the relevant date — graduation date for degrees, admission date for transcripts. Context-based ("Degree: ..." / "date of admission: ...") and generic date patterns are combined and deduplicated. Invalid date-like strings (e.g. OCR noise like "34-65-5413") are automatically rejected with a retry loop.
+6. Normalizes dates to a consistent `Month DD, YYYY` format regardless of how they appear in the document — both `June 12, 1979` and `06/12/79` will produce `June 12, 1979`. 2-digit years are expanded automatically (`79` → `1979`, years `00–19` are assumed to be 2000s)
+7. Assembles the parts into a clean filename, stripping invalid characters
 
 **Fallback behavior:**
-If the date cannot be extracted, a warning is logged and the file is routed to an `Error/Date` folder. The conversion still completes — only the filename and destination differ.
+If the name cannot be extracted, a warning is logged and the file is routed to an `Error/Name` folder. If the date cannot be extracted, it is routed to `Error/Date`. The conversion still completes — only the filename and destination differ.
 
 ### Search Mode Workflow
 
@@ -545,7 +536,7 @@ All processing is performed **entirely locally on your machine**. No files, text
 | Tesseract OCR       | None            | None — fully offline |
 | OCRmyPDF            | None            | None — fully offline |
 | Pillow              | None            | None — fully offline |
-| PyMuPDF / Poppler   | None            | None — fully offline |
+| PyMuPDF            | None            | None — fully offline |
 | tkinter             | None            | None — fully offline |
 
 This makes the tool suitable for handling sensitive documents such as university transcripts and degrees, where student records should remain confidential and within your institution's systems.
@@ -696,4 +687,3 @@ Project Link: [https://github.com/becktorrescoding/image_to_pdf](https://github.
 - [pytesseract](https://github.com/madmaze/pytesseract) - Python wrapper for Tesseract
 - [Pillow](https://python-pillow.org/) - Python imaging library
 - [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF rendering and manipulation
-- [Poppler](https://poppler.freedesktop.org/) - PDF rendering engine
