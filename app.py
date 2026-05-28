@@ -127,6 +127,18 @@ _MONTH_MAP = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }
+_NAME_LABEL_RE = re.compile(
+    r"(?:Name|Student(?:\s+Name)?|Applicant(?:\s+Name)?)\s*:",
+    re.IGNORECASE,
+)
+
+_STUDENT_NO_RE = re.compile(r"Student\s+(?:No\.?|#|ID|Number)\b", re.IGNORECASE)
+
+_COURSE_LABEL_RE = re.compile(
+    r"(?:Program|Major|Course|Field\s+of\s+Study|Curriculum)\s*:",
+    re.IGNORECASE,
+)
+
 _MONTH_NAME_PAT = (
     r"(?:January|February|March|April|May|June|July|August|"
     r"September|October|November|December|"
@@ -439,6 +451,79 @@ class Application(tk.Tk):
     # ------------------------------------------------------------------
     # Search mode
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_name(text: str) -> str:
+        """Extract name from OCR text using name labels, returned as 'First [Middle] Last'."""
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            m = _NAME_LABEL_RE.search(line)
+            if not m:
+                continue
+            after_label = line[m.end():].strip().rstrip(".")
+            if after_label and _STUDENT_NO_RE.search(after_label):
+                after_label = ""
+            if not after_label:
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    candidate = lines[j].strip().rstrip(".")
+                    if candidate:
+                        after_label = candidate
+                        if _STUDENT_NO_RE.search(after_label):
+                            after_label = ""
+                            continue
+                        break
+            if after_label:
+                return after_label
+        return ""
+
+    @staticmethod
+    def _format_name(raw: str) -> str:
+        """
+        Parse name in 'Last, First Mi' or 'First Mi Last' format.
+        Returns 'Last, First [Mi.]'.
+        """
+        raw = raw.strip().rstrip(".")
+        if "," in raw:
+            last_part, rest = raw.split(",", 1)
+            last = last_part.strip().rstrip(".")
+            parts = rest.strip().split()
+            first = parts[0].rstrip(".")
+            middle_parts = [p.rstrip(".") for p in parts[1:]]
+        else:
+            parts = raw.split()
+            first = parts[0].rstrip(".")
+            last = parts[-1].rstrip(".")
+            middle_parts = [p.rstrip(".") for p in parts[1:-1]]
+        middle = " ".join(middle_parts)
+        if middle:
+            return f"{last}, {first} {middle}."
+        return f"{last}, {first}"
+
+    @staticmethod
+    def _has_valid_match(text: str, keyword: str) -> bool:
+        """True if *keyword* appears as a whole word not preceded by a digit on the same line."""
+        pattern = re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
+        for line in text.split("\n"):
+            for m in pattern.finditer(line):
+                j = m.start() - 1
+                while j >= 0 and line[j].isspace():
+                    j -= 1
+                if j < 0 or not line[j].isdigit():
+                    return True
+        return False
+
+    @staticmethod
+    def _in_name_context(text: str, keyword: str) -> bool:
+        """Return True if *keyword* as a whole word appears within 2 lines of a name label."""
+        pattern = re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if _NAME_LABEL_RE.search(line):
+                for j in range(i, min(i + 3, len(lines))):
+                    if pattern.search(lines[j]):
+                        return True
+        return False
+
     def search_mode(self):
         self.log("=== Starting Search ===")
 
@@ -481,15 +566,19 @@ class Application(tk.Tk):
                     text = pytesseract.image_to_string(top_third)
                     self._index_entry(index, file_path, ocr_text=text)
                 matched_words = [
-                    word for word in keywords if word.lower() in text.lower()
+                    word for word in keywords if self._has_valid_match(text, word)
                 ]
                 count = len(matched_words)
                 if count > 0:
-                    scores[file_path] = count
+                    name_ctx = sum(
+                        1 for kw in matched_words if self._in_name_context(text, kw)
+                    )
+                    scores[file_path] = name_ctx * 1000 + count
+                    ctx_info = f", {name_ctx}/{len(keywords)} in name context" if name_ctx else ""
                     if count == len(keywords):
-                        self.log(f"Full match ({count}/{len(keywords)}): {file_path}")
+                        self.log(f"Full match ({count}/{len(keywords)}{ctx_info}): {file_path}")
                     else:
-                        self.log(f"~ {count}/{len(keywords)} keyword(s) matched: {file_path}")
+                        self.log(f"~ {count}/{len(keywords)} keyword(s) matched{ctx_info}: {file_path}")
             except Exception as e:
                 self.log(f"Error processing {file_path}: {e}")
 
@@ -785,16 +874,22 @@ class Application(tk.Tk):
             messagebox.showerror("Preview Error", f"Could not open image:\n{e}", parent=self.preview_win)
             return
 
+        img = img.convert("RGB")
+
         win = tk.Toplevel(self.preview_win)
         win.title(os.path.basename(file_path))
         win.resizable(True, True)
 
+        screen_w = win.winfo_screenwidth()
         screen_h = win.winfo_screenheight()
-        max_display_h = screen_h - 120
-        if img.height > max_display_h:
-            ratio = max_display_h / img.height
-            new_w = int(img.width * ratio)
-            new_h = int(img.height * ratio)
+        max_w = screen_w - 80
+        max_h = screen_h - 120
+
+        new_w, new_h = img.width, img.height
+        if new_w > max_w or new_h > max_h:
+            ratio = min(max_w / new_w, max_h / new_h)
+            new_w = int(new_w * ratio)
+            new_h = int(new_h * ratio)
             display_img = img.resize((new_w, new_h), Image.LANCZOS)
         else:
             display_img = img.copy()
@@ -853,7 +948,7 @@ class Application(tk.Tk):
                 f"Cancel = Skip this file",
                 parent=self,
             )
-            if ans is True:
+            if ans:
                 result[0] = "replace"
             elif ans is False:
                 result[0] = "append"
@@ -935,7 +1030,11 @@ class Application(tk.Tk):
     # Search index
     # ------------------------------------------------------------------
     def _index_path(self):
-        return os.path.join(self.output_path.get(), "file_index_python_search_engine.json")
+        out = self.output_path.get().strip()
+        if not out:
+            self.log("Warning: output folder not set, cannot determine index path")
+            return ""
+        return os.path.join(out, "file_index_python_search_engine.json")
 
     def _lock_index(self, shared=False):
         """Lock the index lock-file. Returns fd, raises on failure."""
@@ -964,6 +1063,8 @@ class Application(tk.Tk):
 
     def _load_index(self):
         path = self._index_path()
+        if not path:
+            return {}
         fd = self._lock_index(shared=True)
         try:
             with open(path) as f:
@@ -980,6 +1081,8 @@ class Application(tk.Tk):
 
     def _save_index(self, index):
         path = self._index_path()
+        if not path:
+            return
         fd = self._lock_index(shared=False)
         try:
             raw = json.dumps(index, indent=2).encode()
@@ -1036,13 +1139,17 @@ class Application(tk.Tk):
             """Remove characters invalid in filename."""
             return re.sub(r'[\\/*?:"<>|]', "", value).strip()
 
-        name = self.search_name.get().strip()
-        if len(name.split()) == 3:
-            first, last, middle = name.split()
-            name = last + ", " + first + " " + middle + "."
+        raw_name = self._extract_name(text)
+        if raw_name:
+            self.log(f"  OCR-extracted name: {raw_name!r}")
         else:
-            first, last = name.split()
-            name = last + ", " + first
+            raw_name = self.search_name.get().strip()
+            if raw_name:
+                self.log(f"  Using search-field name: {raw_name!r}")
+        if not raw_name:
+            self.log("  Could not extract name - routing to Error/Name.")
+            return "", Path("Error/Name"), "", "", "", ""
+        name = self._format_name(raw_name)
 
         # -- Detect document type & degree --------------------------
         is_degree = False
@@ -1093,6 +1200,17 @@ class Application(tk.Tk):
                         words = before_degree.split()
                         course_text = " ".join(words[-9:]).strip()
             self.log(f"Course Found: {course_text}")
+        else:
+            for line in text.split("\n"):
+                m = _COURSE_LABEL_RE.search(line)
+                if m:
+                    after = line[m.end():].strip()
+                    if after:
+                        words = after.split()
+                        course_text = " ".join(words[:9]).strip()
+                        break
+            if course_text:
+                self.log(f"Course found: {course_text}")
 
         # -- Extract date -------------------------------------------
         date_pattern = r"(" + _DATE_NAMED + r"|" + _DATE_NUMERIC + r")"
