@@ -1,7 +1,7 @@
 """
 Image to PDF Converter
 ----------------------
-Requires system tools:  tesseract, ghostscript, poppler
+Requires system tools:  tesseract, ghostscript
 Requires Python pkgs:   ocrmypdf, pytesseract, Pillow, pymupdf
 
 Run the platform installer first if you haven't already:
@@ -81,10 +81,6 @@ def check_dependencies():
         (
             "ghostscript  (PDF engine)",
             [["gs", "--version"], ["gswin64c", "--version"], ["gswin32c", "--version"]],
-        ),
-        (
-            "poppler / pdftoppm  (PDF-to-image, required by pdf2image)",
-            [["pdftoppm", "-v"], ["pdftoppm", "--version"]],
         ),
     ]
     for label, candidates in system_tools:
