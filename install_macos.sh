@@ -11,7 +11,7 @@ info() { echo "     $1"; }
 fail() { echo "     ✗ ERROR: $1"; exit 1; }
 
 # 1. Homebrew
-echo "[1/6] Checking for Homebrew..."
+echo "[1/5] Checking for Homebrew..."
 if ! command -v brew &>/dev/null; then
     info "Homebrew not found. Installing..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
@@ -26,7 +26,7 @@ fi
 
 # 2. Python 3.9+
 echo ""
-echo "[2/6] Checking for Python 3.9+..."
+echo "[2/5] Checking for Python 3.9+..."
 PYTHON=""
 for cmd in python3.12 python3.11 python3.10 python3.9 python3; do
     if command -v "$cmd" &>/dev/null; then
@@ -46,7 +46,7 @@ fi
 
 # 3. Tesseract
 echo ""
-echo "[3/6] Checking for Tesseract OCR..."
+echo "[3/5] Checking for Tesseract OCR..."
 if ! command -v tesseract &>/dev/null; then
     info "Installing Tesseract via Homebrew..."
     brew install tesseract
@@ -57,7 +57,7 @@ fi
 
 # 4. Ghostscript
 echo ""
-echo "[4/6] Checking for Ghostscript..."
+echo "[4/5] Checking for Ghostscript..."
 if ! command -v gs &>/dev/null; then
     info "Installing Ghostscript via Homebrew..."
     brew install ghostscript
@@ -66,20 +66,9 @@ else
     ok "Ghostscript found: $(gs --version)"
 fi
 
-# 5. Poppler (pdftoppm)
+# 5. Python packages
 echo ""
-echo "[5/6] Checking for Poppler (pdftoppm)..."
-if ! command -v pdftoppm &>/dev/null; then
-    info "Installing Poppler via Homebrew..."
-    brew install poppler
-    ok "Poppler installed."
-else
-    ok "Poppler found: $(pdftoppm -v 2>&1 | head -1)"
-fi
-
-# 6. Python packages
-echo ""
-echo "[6/6] Installing Python packages..."
+echo "[5/5] Installing Python packages..."
 $PYTHON -m pip install --upgrade pip --quiet
 $PYTHON -m pip install --upgrade ocrmypdf pytesseract Pillow pymupdf \
     || fail "Failed to install Python packages."
