@@ -20,14 +20,15 @@ import re
 import subprocess
 import sys
 import threading
+import tkinter as tk
 from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext
 
 import ocrmypdf
 import pymupdf
 import pytesseract
 from PIL import Image, ImageTk
-import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+
 
 # ---------------------------------------------------------------------------
 # Dependency checks
@@ -247,6 +248,13 @@ class Application(tk.Tk):
         tk.Label(self.path_frame, text="Output Folder:").grid(row=1, column=0, sticky="w", pady=5)
         tk.Entry(self.path_frame, textvariable=self.output_path, width=40).grid(row=1, column=1, padx=5)
         tk.Button(self.path_frame, text="Browse", command=self.browse_output).grid(row=1, column=2)
+
+        tk.Button(self.path_frame, text="Import Index", command=self._import_index_ui, font=("Arial", 8)).grid(
+            row=2, column=1, padx=5, pady=3, sticky="w"
+        )
+        tk.Label(
+            self.path_frame, text="Load pre-built encrypted index file", font=("Arial", 8), fg="#666"
+        ).grid(row=2, column=2, sticky="w")
 
         self.mode_frame = tk.LabelFrame(
             self,
@@ -523,6 +531,11 @@ class Application(tk.Tk):
     def search_mode(self):
         self.log("=== Starting Search ===")
 
+        if not self._ensure_index():
+            self.log("Search cancelled — no index available.")
+            self.after(0, self._reset_buttons)
+            return
+
         input_folder = self.input_path.get()
         name = self.search_name.get()
         self.log(f"Searching for: {name}")
@@ -641,6 +654,11 @@ class Application(tk.Tk):
     # ------------------------------------------------------------------
     def bulk_mode(self):
         self.log("=== Starting Bulk mode ===")
+
+        if not self._ensure_index():
+            self.log("Bulk conversion cancelled — no index available.")
+            self.after(0, self._reset_buttons)
+            return
 
         input_folder = self.input_path.get()
         converted = 0
@@ -1037,8 +1055,7 @@ class Application(tk.Tk):
         lock_path = self._index_path() + ".lock"
         fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY)
         if os.name == "nt":
-            import msvcrt
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            self._lock_windows(fd, shared)
         else:
             import fcntl
             mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
@@ -1049,13 +1066,132 @@ class Application(tk.Tk):
         """Release a lock obtained by _lock_index."""
         try:
             if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                self._unlock_windows(fd)
             else:
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+    @staticmethod
+    def _lock_windows(fd, shared):
+        """Lock byte 0 of *fd* via LockFileEx (shared or exclusive)."""
+        import ctypes.wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32._get_osfhandle(fd)
+        flags = 0 if shared else 2  # 2 = LOCKFILE_EXCLUSIVE_LOCK
+        overlapped = ctypes.wintypes.OVERLAPPED()
+        if not kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    @staticmethod
+    def _unlock_windows(fd):
+        """Unlock byte 0 of *fd* via UnlockFileEx."""
+        import ctypes.wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32._get_osfhandle(fd)
+        overlapped = ctypes.wintypes.OVERLAPPED()
+        if not kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def _ensure_index(self):
+        """Check if the index file exists. If missing, prompt user on the main thread.
+
+        Returns True to proceed, False to cancel the calling operation.
+        Safe to call from any thread.
+        """
+        path = self._index_path()
+        if not path:
+            return False
+        if os.path.exists(path):
+            return True
+
+        result = [None]
+        event = threading.Event()
+
+        def ask():
+            ans = messagebox.askyesnocancel(
+                "Index Not Found",
+                "No search index exists in the output folder.\n\n"
+                "Yes   = Create a new empty index\n"
+                "No    = Select an existing encrypted index file to import\n"
+                "Cancel = Stop",
+                parent=self,
+            )
+            if ans is True:
+                result[0] = "create"
+            elif ans is False:
+                import_path = filedialog.askopenfilename(
+                    title="Select Index File to Import",
+                    filetypes=[("Index files", "*.json"), ("All files", "*.*")],
+                    parent=self,
+                )
+                result[0] = import_path if import_path else "cancel"
+            else:
+                result[0] = "cancel"
+            event.set()
+
+        self.after(0, ask)
+        event.wait()
+
+        choice = result[0]
+        if choice == "create":
+            self._save_index({})
+            self.log("New empty index created in output folder.")
+            return True
+        if choice != "cancel":
+            try:
+                self._import_index_file(choice)
+                self.log(f"Index imported from {choice}.")
+                return True
+            except Exception as e:
+                self.log(f"Failed to import index: {e}")
+                self.after(0, lambda e=e: messagebox.showerror("Import Failed", str(e)))
+                return False
+        return False
+
+    def _import_index_file(self, file_path):
+        """Validate an encrypted index file and copy it to the output folder.
+
+        Raises on failure (invalid format, I/O error, etc.).
+        """
+        with open(file_path) as f:
+            raw = f.read()
+        if not raw.strip():
+            raise ValueError("File is empty")
+        decoded = base64.b64decode(raw)
+        decompressed = gzip.decompress(decoded)
+        data = json.loads(decompressed)
+        index_path = self._index_path()
+        if not index_path:
+            raise ValueError("Output folder not set")
+        with open(index_path, "w") as f:
+            f.write(raw)
+        return data
+
+    def _import_index_ui(self):
+        """Button handler — pick an encrypted index file and import it. Main thread only."""
+        path = filedialog.askopenfilename(
+            title="Select Index File to Import",
+            filetypes=[("Index files", "*.json"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not path:
+            return
+        try:
+            data = self._import_index_file(path)
+            n = len(data)
+            self.log(f"Index imported from {path} — {n} entr{'y' if n == 1 else 'ies'}.")
+            messagebox.showinfo(
+                "Import Successful",
+                f"Index imported with {n} entr{'y' if n == 1 else 'ies'}.",
+                parent=self,
+            )
+        except Exception as e:
+            self.log(f"Index import failed: {e}")
+            messagebox.showerror("Import Failed", str(e), parent=self)
 
     def _load_index(self):
         path = self._index_path()
