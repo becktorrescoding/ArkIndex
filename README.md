@@ -22,6 +22,11 @@ A Python GUI application that combines OCR-based document search with image-to-P
 - **Expandable Previews**: Click any thumbnail to open a full-resolution view scaled to fit screen height
 - **Duplicate Handling**: When a destination PDF already exists, prompted with Replace / Append pages / Skip
 - **Cross-instance Safety**: Index file uses advisory file locking and atomic writes to prevent corruption when multiple instances access it simultaneously
+- **Persistent Settings**: Last-used folders and operation mode are remembered between sessions (stored per-device in the system temp directory, so settings never follow you across machines)
+- **Session Logging**: Every processing session writes a timestamped log file to `<output>/logs/` for auditing
+- **Export Results**: Search scores and conversion metadata can be exported to a timestamped CSV file
+- **Theme Selection**: Toggle between light and dark mode; preference is persisted between sessions
+- **Auto-Updater**: On startup, checks GitHub releases for a newer version. If found, you can download and replace the current app automatically — the renamed filename is preserved
 
 ## Prerequisites
 
@@ -39,11 +44,11 @@ A Python GUI application that combines OCR-based document search with image-to-P
 
 For the quickest setup, run the platform-specific installer. It handles Python, Tesseract, Ghostscript, and all Python packages automatically.
 
-| Platform | Command |
-|----------|---------|
+| Platform    | Command                                                 |
+|-------------|---------------------------------------------------------|
 | **Windows** | `install_windows.bat` (double-click or run in terminal) |
-| **macOS**   | `bash install_macos.sh` |
-| **Linux**   | `bash install_linux.sh` |
+| **macOS**   | `bash install_macos.sh`                                 |
+| **Linux**   | `bash install_linux.sh`                                 |
 
 If your system is missing required tools, the installer will attempt to install them. On Windows, it uses `winget` when available and falls back to direct downloads otherwise.
 
@@ -350,6 +355,9 @@ Application (tk.Tk)
 ├── _check_pause_stop()     # Called between files; blocks while paused, returns True if stopped
 ├── _reset_buttons()        # Re-enable Start and disable Pause/Stop
 ├── toggle_mode()           # Show/hide search fields based on mode
+├── _toggle_theme()         # Switch between light and dark mode
+├── _check_for_updates()    # Check GitHub for newer version; auto-download and replace on user consent
+├── _on_close()             # Save settings on window close
 ├── browse_input()          # Handle input folder selection
 ├── browse_output()         # Handle output folder selection
 ├── start()                 # Validate inputs and start thread
@@ -368,12 +376,22 @@ Application (tk.Tk)
 ├── _format_name()          # Parse 'Last, First' or 'First Last' into standard form
 ├── _has_valid_match()      # Whole-word match rejecting digit-preceded occurrences
 ├── _in_name_context()      # Check if keyword appears near a name label
+├── _export_results()       # Save search/conversion results to CSV
 ├── _load_index()           # Load search index from disk
 ├── _save_index()           # Save search index to disk
 ├── _get_cached_text()      # Retrieve cached OCR text if mtime matches
 ├── _index_entry()          # Add/update entry in search index
+├── _ensure_index()         # Prompt to create or import index if missing
+├── _import_index_file()    # Validate and copy an encrypted index file
+├── _import_index_ui()      # Button handler for importing an index
 ├── _lock_index()           # Acquire file lock for index access
 ├── _unlock_index()         # Release file lock
+├── _lock_windows()         # Windows LockFileEx (shared/exclusive)
+├── _unlock_windows()       # Windows UnlockFileEx
+├── _write_log_file()       # Append message to session log in <output>/logs/
+├── _settings_path()        # Path to per-device settings in system temp directory
+├── _save_settings()        # Persist folders and mode to disk
+├── _load_settings()        # Restore folders and mode from disk
 └── log()                   # Display messages in GUI (thread-safe)
 ```
 
@@ -440,7 +458,7 @@ If the name cannot be extracted, a warning is logged and the file is routed to a
 - **Location**: `file_index_python_search_engine.json` inside the output folder
 - **Content**: Base64 + gzip encoded JSON mapping file paths to OCR text, degree type, course, date, year, generated filename, and file modification timestamp
 - **Cache Invalidation**: If a source file's modification time changes, it is automatically re-OCR'd on the next search
-- **Cross-instance Safety**: Uses `fcntl.flock` (Unix) / `msvcrt.locking` (Windows) with shared locks for reads and exclusive locks for writes. Index content is written atomically (write to `.tmp`, then `os.replace()`)
+- **Cross-instance Safety**: Uses `fcntl.flock` (Unix) / `LockFileEx` via `ctypes` (Windows) — shared locks for reads, exclusive locks for writes, functioning correctly over SMB network drives
 - **Utility Script**: Run `python decode_index.py <path-to-index>` to decode the index to human-readable JSON
 
 ### Duplicate File Handling
@@ -459,6 +477,7 @@ The prompt is synchronized from the background thread to the main thread so the 
 - **PDF Rendering**: PyMuPDF (fitz) renders PDF pages as images for preview and processing
 - **Threading**: `threading.Thread` prevents GUI freezing during processing; `threading.Event` objects (`_pause_event`, `_stop_event`) coordinate pause and stop signals between the GUI and worker thread
 - **Logging**: Thread-safe via `after_idle()` deferral to the main thread
+- **Auto-Updater**: `urllib.request` fetches the latest release from the GitHub API; `os.replace()` provides atomic file replacement preserving the renamed script name
 - **File Handling**: `pathlib.Path` for cross-platform path management
 - **Index Encoding**: gzip compressed + base64 encoded to prevent casual reading outside the application
 - **Error Handling**: Try-except blocks catch and log errors gracefully
@@ -529,15 +548,18 @@ The GUI includes comprehensive error handling:
 
 ## Privacy & Data Security
 
-All processing is performed **entirely locally on your machine**. No files, text, or metadata are transmitted over the internet at any point.
+All OCR and PDF processing is performed **entirely locally on your machine**. No document text, metadata, or file contents are transmitted over the internet.
 
-| Dependency          | Data Collection | Network Access       |
-|---------------------|-----------------|----------------------|
-| Tesseract OCR       | None            | None — fully offline |
-| OCRmyPDF            | None            | None — fully offline |
-| Pillow              | None            | None — fully offline |
-| PyMuPDF            | None            | None — fully offline |
-| tkinter             | None            | None — fully offline |
+The only network requests made are:
+- **Auto-Updater** (opt-out by declining the update prompt): On startup, a request is sent to `api.github.com` to check for a newer version. If you choose to update, the new `app.py` is downloaded from `raw.githubusercontent.com`. No personal or document data is included in these requests.
+
+| Dependency    | Data Collection | Network Access       |
+|---------------|-----------------|----------------------|
+| Tesseract OCR | None            | None — fully offline |
+| OCRmyPDF      | None            | None — fully offline |
+| Pillow        | None            | None — fully offline |
+| PyMuPDF       | None            | None — fully offline |
+| tkinter       | None            | None — fully offline |
 
 This makes the tool suitable for handling sensitive documents such as university transcripts and degrees, where student records should remain confidential and within your institution's systems.
 
@@ -624,27 +646,15 @@ This makes the tool suitable for handling sensitive documents such as university
 Potential improvements for future versions:
 
 ### GUI Improvements
-- **Save/Load Settings**: Remember last used folders and mode
-- **Theme Selection**: Light/dark mode options
 - **Drag & Drop**: Drop files directly into window
 
 ### Functionality
 - **Custom Match Threshold**: Slider to adjust partial match percentage
-- **Export Results**: Save list of matched/converted files to CSV/Excel
-- **Batch Processing**: Queue multiple searches to run sequentially
-- **Bulk Output Naming**: Custom naming conventions for bulk converted files
-
-### Performance
-- **Parallel Processing**: Multi-threaded conversion for multiple files in bulk mode
-- **Smart Scanning**: Skip previously converted files
-- **Low-res Preview**: Quick preview mode before full OCR
 
 ### Advanced Features
 - **Regular Expression Search**: Pattern matching for complex queries
 - **File Management**: Option to move/copy originals after conversion
-- **PDF Merging**: Combine multiple matched documents into single PDF
 - **Annotation**: Add notes or highlights to converted PDFs
-- **Logging System**: Export detailed logs to file for auditing
 
 ## License
 
