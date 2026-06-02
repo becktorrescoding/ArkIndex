@@ -653,7 +653,6 @@ Potential improvements for future versions:
 
 ### Advanced Features
 - **Regular Expression Search**: Pattern matching for complex queries
-- **File Management**: Option to move/copy originals after conversion
 - **Annotation**: Add notes or highlights to converted PDFs
 
 ## License
