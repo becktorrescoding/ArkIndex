@@ -10,6 +10,9 @@ Run the platform installer first if you haven't already:
   Linux   : bash install_linux.sh
 """
 
+VERSION = "1.2.0"
+GITHUB_REPO = "becktorrescoding/image_to_pdf"
+
 import base64
 import gzip
 import importlib
@@ -20,9 +23,13 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
+import urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext
+
+CURRENT_SCRIPT = Path(__file__).resolve()
 
 import ocrmypdf
 import pymupdf
@@ -201,6 +208,39 @@ def sort_dates_chronologically(date_strings: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Theme definitions
+# ---------------------------------------------------------------------------
+
+THEMES = {
+    "light": {
+        "bg": "#f0f0f0",
+        "fg": "#000000",
+        "entry_bg": "#ffffff",
+        "entry_fg": "#000000",
+        "select_bg": "#4a90d9",
+        "log_bg": "#ffffff",
+        "log_fg": "#000000",
+        "title_bg": "#2c3e50",
+        "title_fg": "white",
+        "button_bg": "#e0e0e0",
+        "button_fg": "#000000",
+    },
+    "dark": {
+        "bg": "#2b2b2b",
+        "fg": "#e0e0e0",
+        "entry_bg": "#3c3c3c",
+        "entry_fg": "#e0e0e0",
+        "select_bg": "#4a90d9",
+        "log_bg": "#1e1e1e",
+        "log_fg": "#e0e0e0",
+        "title_bg": "#1a1a2e",
+        "title_fg": "#e0e0e0",
+        "button_bg": "#4a4a4a",
+        "button_fg": "#e0e0e0",
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 class Application(tk.Tk):
@@ -221,22 +261,61 @@ class Application(tk.Tk):
         self._pause_event.set()
         self._stop_event = threading.Event()
         self._search_index = None
+        self._log_file = None
+        self._last_scores = None
+        self._last_keywords = None
+        self._conversion_log = []
+        self._theme = tk.StringVar(value="light")
+        self._title_label = None
 
         self.create_widgets()
+        self._load_settings()
+        self._apply_theme()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(1000, lambda: self._check_for_updates(silent=True))
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
     def create_widgets(self):
-        title = tk.Label(
-            self,
+        title_frame = tk.Frame(self, bg="#2c3e50")
+        title_frame.pack(fill="x")
+
+        self._title_label = tk.Label(
+            title_frame,
             text="Image to PDF Converter",
             font=("Arial", 14, "bold"),
             bg="#2c3e50",
             fg="white",
             pady=10,
         )
-        title.pack(fill="x")
+        self._title_label.pack(side="left", padx=10)
+
+        tk.Button(
+            title_frame,
+            text="☀ Light / Dark",
+            command=self._toggle_theme,
+            font=("Arial", 8),
+            bd=1,
+            relief="solid",
+            bg="#34495e",
+            fg="white",
+            padx=6,
+            pady=2,
+        ).pack(side="right", padx=(0, 10), pady=8)
+
+        tk.Button(
+            title_frame,
+            text="Check for Updates",
+            command=self._check_for_updates,
+            font=("Arial", 8),
+            bd=1,
+            relief="solid",
+            bg="#34495e",
+            fg="white",
+            padx=6,
+            pady=2,
+        ).pack(side="right", padx=(0, 5), pady=8)
 
         self.path_frame = tk.Frame(self, padx=20, pady=10)
         self.path_frame.pack(fill="x")
@@ -249,12 +328,13 @@ class Application(tk.Tk):
         tk.Entry(self.path_frame, textvariable=self.output_path, width=40).grid(row=1, column=1, padx=5)
         tk.Button(self.path_frame, text="Browse", command=self.browse_output).grid(row=1, column=2)
 
-        tk.Button(self.path_frame, text="Import Index", command=self._import_index_ui, font=("Arial", 8)).grid(
-            row=2, column=1, padx=5, pady=3, sticky="w"
-        )
         tk.Label(
             self.path_frame, text="Load pre-built encrypted index file", font=("Arial", 8), fg="#666"
-        ).grid(row=2, column=2, sticky="w")
+        ).grid(row=2, column=1, sticky="w")
+
+        tk.Button(self.path_frame, text="Import Index", command=self._import_index_ui, font=("Arial", 8)).grid(
+            row=2, column=2, padx=5, pady=3, sticky="w"
+        )
 
         self.mode_frame = tk.LabelFrame(
             self,
@@ -343,6 +423,18 @@ class Application(tk.Tk):
         )
         self.stop_button.pack(side="left", padx=5)
 
+        self.export_button = tk.Button(
+            btn_frame,
+            text="Export Results",
+            command=self._export_results,
+            bg="#2980b9",
+            fg="white",
+            font=("Arial", 10, "bold"),
+            width=14,
+            height=2,
+        )
+        self.export_button.pack(side="left", padx=5)
+
         log_frame = tk.Frame(self, padx=20, pady=10)
         log_frame.pack(fill="both", expand=True)
 
@@ -350,6 +442,7 @@ class Application(tk.Tk):
 
         self.log_text = scrolledtext.ScrolledText(log_frame, height=10, width=70)
         self.log_text.pack(fill="both", expand=True)
+        self.log_text.configure(state="disabled")
 
     # ------------------------------------------------------------------
     # Pause / Stop / Mode helpers
@@ -390,6 +483,152 @@ class Application(tk.Tk):
         else:
             self.search_frame.pack(fill="x", padx=20, pady=10, after=self.mode_frame)
 
+    def _toggle_theme(self):
+        """Switch between light and dark theme."""
+        self._theme.set("dark" if self._theme.get() == "light" else "light")
+        self._apply_theme()
+
+    def _check_for_updates(self, silent=False):
+        """Check GitHub releases for a newer version (background thread).
+
+        If silent (startup), failures are logged without a dialog.
+        If an update is found, prompts the user to download and replace.
+        """
+        def _check():
+            try:
+                url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+                req = urllib.request.Request(url, headers={"Accept": "application/json"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode())
+                latest = data.get("tag_name", "").lstrip("v")
+                current = VERSION
+                current_parts = tuple(int(p) for p in current.split("."))
+                latest_parts = tuple(int(p) for p in latest.split(".")) if latest else (0,)
+
+                if latest_parts <= current_parts:
+                    if not silent:
+                        self.after(0, lambda: messagebox.showinfo(
+                            "No Updates", f"You are running the latest version ({current})."
+                        ))
+                    self.after(0, lambda: self.log(f"Version check: up to date ({current})"))
+                    return
+
+                # Update available — prompt user
+                msg = (
+                    f"Version {latest} is available (you have {current}).\n"
+                    "Would you like to download it now?"
+                )
+                result = [False]
+                ev = threading.Event()
+                def ask():
+                    result[0] = messagebox.askyesno("Update Available", msg)
+                    ev.set()
+                self.after(0, ask)
+                ev.wait()
+
+                if not result[0]:
+                    self.after(0, lambda: self.log(f"Update to v{latest} declined."))
+                    return
+
+                # Download the new app.py from the main branch
+                raw_url = (
+                    f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/app.py"
+                )
+                req = urllib.request.Request(raw_url)
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    new_code = resp.read()
+
+                # Write to a temp file, then atomically replace the current script
+                import tempfile
+                tmp = tempfile.NamedTemporaryFile(
+                    dir=CURRENT_SCRIPT.parent,
+                    prefix=".update_",
+                    suffix=".py",
+                    delete=False,
+                )
+                try:
+                    tmp.write(new_code)
+                    tmp.close()
+                    os.replace(tmp.name, str(CURRENT_SCRIPT))
+                except Exception:
+                    try:
+                        os.unlink(tmp.name)
+                    except Exception:
+                        pass
+                    raise
+
+                self.after(0, lambda: self.log(
+                    "Update applied. Please restart the application."
+                ))
+                self.after(0, lambda: messagebox.showinfo(
+                    "Update Complete",
+                    "The new version has been downloaded and saved.\n"
+                    "Please restart the application to use it."
+                ))
+
+            except Exception as e:
+                if not silent:
+                    self.after(0, lambda: messagebox.showerror(
+                        "Update Check Failed",
+                        f"Could not check for updates:\n{e}"
+                    ))
+                self.after(0, lambda: self.log(f"Update check failed: {e}"))
+
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _apply_theme(self):
+        """Recursively apply the current theme to all widgets."""
+        theme = THEMES[self._theme.get()]
+        self.configure(bg=theme["bg"])
+        self._theme_widgets(self, theme)
+
+    def _theme_widgets(self, parent, theme):
+        """Walk all children and apply theme colors."""
+        for child in parent.winfo_children():
+            cls = child.winfo_class()
+            if cls in ("Frame", "Labelframe"):
+                child.configure(bg=theme["bg"])
+                if cls == "Labelframe":
+                    try:
+                        child.tk.call(child._w, "configure",
+                                      "-foreground", theme["fg"])
+                    except tk.TclError:
+                        pass
+            elif cls == "Label":
+                child.configure(bg=theme["bg"], fg=theme["fg"])
+            elif cls in ("Entry", "Text"):
+                child.configure(
+                    bg=theme["entry_bg"],
+                    fg=theme["entry_fg"],
+                    insertbackground=theme["fg"],
+                    selectbackground=theme["select_bg"],
+                )
+            elif cls == "Canvas":
+                child.configure(bg=theme["bg"])
+            elif cls == "Radiobutton":
+                child.configure(bg=theme["bg"], fg=theme["fg"],
+                              selectcolor=theme["bg"],
+                              activebackground=theme["bg"])
+            elif cls == "Button":
+                if child not in (
+                    self.start_button,
+                    self.pause_button,
+                    self.stop_button,
+                    self.export_button,
+                ):
+                    child.configure(bg=theme["button_bg"], fg=theme["button_fg"],
+                                  activebackground=theme["button_bg"])
+            self._theme_widgets(child, theme)
+
+        # Style the title label explicitly
+        if self._title_label:
+            self._title_label.configure(bg=theme["title_bg"], fg=theme["title_fg"])
+
+        # Re-color title bar container
+        title_frame = self._title_label.master if self._title_label else None
+        if title_frame:
+            title_frame.configure(bg=theme["title_bg"])
+
     # ------------------------------------------------------------------
     # Logging & browsing
     # ------------------------------------------------------------------
@@ -397,9 +636,131 @@ class Application(tk.Tk):
         if threading.current_thread() is not threading.main_thread():
             self.after_idle(lambda m=message: self.log(m))
             return
+        self.log_text.configure(state="normal")
         self.log_text.insert(tk.END, f"{message}\n")
+        self.log_text.configure(state="disabled")
         self.log_text.see(tk.END)
         self.update_idletasks()
+        self._write_log_file(message)
+
+    def _write_log_file(self, message):
+        """Append *message* to the session log file in <output>/logs/."""
+        if not self._log_file:
+            out = self.output_path.get().strip()
+            if not out:
+                return
+            try:
+                ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+                log_dir = Path(out) / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                self._log_file = log_dir / f"session_log_{ts}.txt"
+            except OSError:
+                return
+        try:
+            with open(self._log_file, "a") as f:
+                f.write(f"{message}\n")
+        except OSError:
+            pass
+
+    def _settings_path(self):
+        """Path to the instance-local settings file in the system temp directory."""
+        import tempfile
+        user = os.environ.get("USER", os.environ.get("USERNAME", "unknown"))
+        return Path(tempfile.gettempdir()) / f"tiff_lookup_settings_{user}.json"
+
+    def _save_settings(self):
+        """Persist current folders and mode to the settings file."""
+        data = {
+            "input_path": self.input_path.get(),
+            "output_path": self.output_path.get(),
+            "mode": self.mode.get(),
+            "theme": self._theme.get(),
+        }
+        try:
+            with open(self._settings_path(), "w") as f:
+                json.dump(data, f)
+        except OSError:
+            pass
+
+    def _load_settings(self):
+        """Restore folders and mode from the settings file (if it exists)."""
+        path = self._settings_path()
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return
+        if data.get("input_path"):
+            self.input_path.set(data["input_path"])
+        if data.get("output_path"):
+            self.output_path.set(data["output_path"])
+        if data.get("mode") in ("search", "bulk"):
+            self.mode.set(data["mode"])
+            self.toggle_mode()
+        if data.get("theme") in ("light", "dark"):
+            self._theme.set(data["theme"])
+
+    def _on_close(self):
+        """Save settings before quitting."""
+        self._save_settings()
+        self.destroy()
+
+    def _export_results(self):
+        """Save matched-file scores and conversion log to a user-chosen CSV."""
+        if not self._last_scores and not self._conversion_log:
+            messagebox.showinfo(
+                "No Results",
+                "No search or conversion results to export yet.\n\n"
+                "Run a search or bulk conversion first.",
+                parent=self,
+            )
+            return
+
+        ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+        path = filedialog.asksaveasfilename(
+            title="Export Results",
+            defaultextension=".csv",
+            initialfile=f"results_{ts}.csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            parent=self,
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", newline="") as f:
+                import csv
+                writer = csv.writer(f)
+
+                if self._last_scores:
+                    writer.writerow(["=== Search Results ==="])
+                    writer.writerow(["File Path", "Total Matches", "Name Context", "Score"])
+                    for file_path, score in sorted(
+                        self._last_scores.items(), key=lambda x: x[1], reverse=True
+                    ):
+                        name_ctx = score // 1000
+                        total = score % 1000
+                        writer.writerow([file_path, total, name_ctx, score])
+                    writer.writerow([])
+
+                if self._conversion_log:
+                    writer.writerow(["=== Conversion Log ==="])
+                    writer.writerow([
+                        "Source File", "Output File", "Degree Type",
+                        "Course", "Date", "Year",
+                    ])
+                    for entry in self._conversion_log:
+                        writer.writerow([
+                            entry["source"], entry["output"], entry["degree_type"],
+                            entry["course"], entry["date"], entry["year"],
+                        ])
+                    writer.writerow([])
+
+            self.log(f"Results exported to {path}")
+            messagebox.showinfo("Export Complete", f"Results saved to:\n{path}", parent=self)
+        except OSError as e:
+            self.log(f"Export failed: {e}")
+            messagebox.showerror("Export Failed", str(e), parent=self)
 
     def browse_input(self):
         folder = filedialog.askdirectory(title="Select Input Folder")
@@ -528,6 +889,12 @@ class Application(tk.Tk):
                         return True
         return False
 
+    @staticmethod
+    def _text_similarity(a: str, b: str) -> float:
+        """Return a similarity ratio (0-1) between two strings."""
+        import difflib
+        return difflib.SequenceMatcher(None, a, b).ratio()
+
     def search_mode(self):
         self.log("=== Starting Search ===")
 
@@ -593,6 +960,8 @@ class Application(tk.Tk):
 
         self._save_index(index)
         self._search_index = None
+        self._last_scores = scores
+        self._last_keywords = keywords
         if total > 0:
             self.log(f"Index cache hits: {cache_hits}/{total}")
 
@@ -982,6 +1351,15 @@ class Application(tk.Tk):
         text = pytesseract.image_to_string(top_third)
         file_name, folder, degree_type, course, date_str, year_str = self.generate_filename(text)
 
+        self._conversion_log.append({
+            "source": str(file_path),
+            "output": str(Path(self.output_path.get()) / folder / f"{file_name}.pdf"),
+            "degree_type": degree_type,
+            "course": course,
+            "date": date_str,
+            "year": year_str,
+        })
+
         # Update index with OCR text and conversion metadata
         index = self._load_index()
         self._index_entry(
@@ -1000,37 +1378,72 @@ class Application(tk.Tk):
         output_file = output_dir / f"{file_name}.pdf"
 
         if output_file.exists():
-            choice = self._prompt_replace_or_append(output_file.name)
-            if choice == "skip":
-                self.log("  Skipped.")
-                return True
-            if choice == "replace":
+            if self.mode.get() == "bulk":
+                # Automated duplicate check for bulk mode
+                try:
+                    existing_text = ""
+                    doc = pymupdf.open(output_file)
+                    for page in doc:
+                        existing_text += page.get_text()
+                    doc.close()
+                    ratio = self._text_similarity(text, existing_text)
+                    if ratio >= 0.85:
+                        self.log(f"  Skipped — duplicate content ({ratio:.0%} match).")
+                        return True
+                except Exception as e:
+                    self.log(f"  Warning: could not check existing PDF: {e}")
+
+                # Different content — append pages to the existing PDF
+                self.log("  Content differs — appending pages.")
+                temp_file = output_dir / "temp.pdf"
                 ocrmypdf.ocr(
                     file_path,
-                    output_file,
+                    temp_file,
                     deskew=True,
                     force_ocr=True,
                     output_type="pdf",
                 )
-                self.log("  Replaced.")
+                main_doc = pymupdf.open(output_file)
+                temp_doc = pymupdf.open(temp_file)
+                main_doc.insert_pdf(temp_doc)
+                main_doc.close()
+                temp_doc.close()
+                os.remove(temp_file)
+                self.log("  Appended.")
                 return True
+            else:
+                choice = self._prompt_replace_or_append(output_file.name)
+                if choice == "skip":
+                    self.log("  Skipped.")
+                    return True
+                if choice == "replace":
+                    ocrmypdf.ocr(
+                        file_path,
+                        output_file,
+                        deskew=True,
+                        force_ocr=True,
+                        output_type="pdf",
+                    )
+                    self.log("  Replaced.")
+                    return True
 
-            # append
-            temp_file = output_dir / "temp.pdf"
-            ocrmypdf.ocr(
-                file_path,
-                temp_file,
-                deskew=True,
-                force_ocr=True,
-                output_type="pdf",
-            )
-            main_doc = pymupdf.open(output_file)
-            temp_doc = pymupdf.open(temp_file)
-            main_doc.insert_pdf(temp_doc)
-            main_doc.close()
-            temp_doc.close()
-            os.remove(temp_file)
-            self.log("  Appended.")
+                # append
+                temp_file = output_dir / "temp.pdf"
+                ocrmypdf.ocr(
+                    file_path,
+                    temp_file,
+                    deskew=True,
+                    force_ocr=True,
+                    output_type="pdf",
+                )
+                main_doc = pymupdf.open(output_file)
+                temp_doc = pymupdf.open(temp_file)
+                main_doc.insert_pdf(temp_doc)
+                main_doc.close()
+                temp_doc.close()
+                os.remove(temp_file)
+                self.log("  Appended.")
+                return True
         else:
             ocrmypdf.ocr(
                 file_path,
