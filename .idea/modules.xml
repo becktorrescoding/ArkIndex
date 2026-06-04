@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/Image_File_Lookup.iml" filepath="$PROJECT_DIR$/Image_File_Lookup.iml" />
+      <module fileurl="file://$PROJECT_DIR$/ArkIndex.iml" filepath="$PROJECT_DIR$/ArkIndex.iml" />
     </modules>
   </component>
 </project>
