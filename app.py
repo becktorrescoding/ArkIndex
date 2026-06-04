@@ -530,9 +530,9 @@ class Application(tk.Tk):
                     self.after(0, lambda: self.log(f"Update to v{latest} declined."))
                     return
 
-                # Download the new app.py from the main branch
+                # Download the new app.py from the release branch
                 raw_url = (
-                    f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/app.py"
+                    f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/app.py"
                 )
                 req = urllib.request.Request(raw_url)
                 with urllib.request.urlopen(req, timeout=30) as resp:
