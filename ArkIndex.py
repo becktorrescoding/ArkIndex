@@ -246,7 +246,7 @@ THEMES = {
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Image to PDF Converter")
+        self.title("ArkIndex")
         self.geometry("1000x900")
         self.resizable(width=True, height=True)
 
