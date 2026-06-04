@@ -10,7 +10,7 @@ Run the platform installer first if you haven't already:
   Linux   : bash install_linux.sh
 """
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 GITHUB_REPO = "becktorrescoding/image_to_pdf"
 
 import base64
@@ -937,9 +937,14 @@ class Application(tk.Tk):
                     cache_hits += 1
                 else:
                     img = self.open_as_image(file_path)
+                    if img is None:
+                        continue
                     w, h = img.size
+                    if w <= 40 or h <= 60:
+                        self.log(f"  Skipped — image too small for OCR: {image}")
+                        continue
                     top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
-                    text = pytesseract.image_to_string(top_third)
+                    text = pytesseract.image_to_string(top_third.convert("RGB"))
                     self._index_entry(index, file_path, ocr_text=text)
                 matched_words = [
                     word for word in keywords if self._has_valid_match(text, word)
@@ -1004,9 +1009,13 @@ class Application(tk.Tk):
                     text = self._get_cached_text(self._search_index, file_path)
                 if text is None:
                     img = self.open_as_image(file_path)
+                    if img is None:
+                        continue
                     w, h = img.size
+                    if w <= 40 or h <= 60:
+                        continue
                     top_third = img.crop((0, 0, w, h // 3))
-                    text = pytesseract.image_to_string(top_third)
+                    text = pytesseract.image_to_string(top_third.convert("RGB"))
                 if year.lower() in text.lower():
                     filtered.append(file_path)
                 else:
@@ -1306,14 +1315,18 @@ class Application(tk.Tk):
     # Image / PDF helpers
     # ------------------------------------------------------------------
     def open_as_image(self, file_path):
-        """Open any supported file as a PIL Image."""
+        """Open any supported file as a PIL Image. Returns None on failure."""
         path = str(file_path).lower()
-        if path.endswith(".pdf"):
-            doc = pymupdf.open(file_path)
-            page = doc[0]
-            pix = page.get_pixmap(dpi=300)
-            return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        return Image.open(file_path)
+        try:
+            if path.endswith(".pdf"):
+                doc = pymupdf.open(file_path)
+                page = doc[0]
+                pix = page.get_pixmap(dpi=300)
+                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            return Image.open(file_path)
+        except Exception as e:
+            self.log(f"Could not open image: {file_path} — {e}")
+            return None
 
     def _prompt_replace_or_append(self, file_name):
         """Ask user what to do with a duplicate destination filename.
@@ -1346,9 +1359,15 @@ class Application(tk.Tk):
     def convert_image(self, file_path):
         self.log(f"Converting: {os.path.basename(file_path)}")
         img = self.open_as_image(file_path)
+        if img is None:
+            self.log("  Skipped — could not read file.")
+            return False
         w, h = img.size
+        if w <= 40 or h <= 60:
+            self.log("  Skipped — image too small for OCR crop region.")
+            return False
         top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
-        text = pytesseract.image_to_string(top_third)
+        text = pytesseract.image_to_string(top_third.convert("RGB"))
         file_name, folder, degree_type, course, date_str, year_str = self.generate_filename(text)
 
         self._conversion_log.append({
@@ -1464,50 +1483,26 @@ class Application(tk.Tk):
         return os.path.join(out, "file_index_python_search_engine.json")
 
     def _lock_index(self, shared=False):
-        """Lock the index lock-file. Returns fd, raises on failure."""
+        """Lock the index lock-file. Returns fd / HANDLE, raises on failure."""
         lock_path = self._index_path() + ".lock"
-        fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY)
         if os.name == "nt":
-            self._lock_windows(fd, shared)
-        else:
-            import fcntl
-            mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
-            fcntl.flock(fd, mode)
+            return _lock_index_windows(lock_path, shared)
+        fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY)
+        import fcntl
+        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+        fcntl.flock(fd, mode)
         return fd
 
-    def _unlock_index(self, fd):
+    def _unlock_index(self, fd_or_handle):
         """Release a lock obtained by _lock_index."""
+        if os.name == "nt":
+            _unlock_index_windows(fd_or_handle)
+            return
         try:
-            if os.name == "nt":
-                self._unlock_windows(fd)
-            else:
-                import fcntl
-                fcntl.flock(fd, fcntl.LOCK_UN)
+            import fcntl
+            fcntl.flock(fd_or_handle, fcntl.LOCK_UN)
         finally:
-            os.close(fd)
-
-    @staticmethod
-    def _lock_windows(fd, shared):
-        """Lock byte 0 of *fd* via LockFileEx (shared or exclusive)."""
-        import ctypes.wintypes
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = kernel32._get_osfhandle(fd)
-        flags = 0 if shared else 2  # 2 = LOCKFILE_EXCLUSIVE_LOCK
-        overlapped = ctypes.wintypes.OVERLAPPED()
-        if not kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped)):
-            raise ctypes.WinError(ctypes.get_last_error())
-
-    @staticmethod
-    def _unlock_windows(fd):
-        """Unlock byte 0 of *fd* via UnlockFileEx."""
-        import ctypes.wintypes
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        handle = kernel32._get_osfhandle(fd)
-        overlapped = ctypes.wintypes.OVERLAPPED()
-        if not kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped)):
-            raise ctypes.WinError(ctypes.get_last_error())
+            os.close(fd_or_handle)
 
     def _ensure_index(self):
         """Check if the index file exists. If missing, prompt user on the main thread.
@@ -1800,6 +1795,86 @@ class Application(tk.Tk):
         folder = Path(doc_folder) / year_str
         self.log(f"File Name: {file_name}")
         return file_name, folder, doc_folder, course_text, date_str, year_str
+
+
+def _lock_index_windows(lock_path, shared):
+    """Open/create a lock file and acquire a lock via LockFileEx.
+
+    Returns the Windows HANDLE (closable via CloseHandle).
+    """
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ = 1
+    FILE_SHARE_WRITE = 2
+    OPEN_ALWAYS = 4
+    FILE_ATTRIBUTE_NORMAL = 0x80
+
+    kernel32.CreateFileW.argtypes = [
+        ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+
+    handle = kernel32.CreateFileW(
+        lock_path,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        None,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        None,
+    )
+    if not handle or handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    class OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", ctypes.c_uint32),
+            ("OffsetHigh", ctypes.c_uint32),
+            ("hEvent", ctypes.c_void_p),
+        ]
+
+    overlapped = OVERLAPPED()
+    flags = 0 if shared else 2  # 2 = LOCKFILE_EXCLUSIVE_LOCK
+    kernel32.LockFileEx.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(OVERLAPPED),
+    ]
+    if not kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped)):
+        kernel32.CloseHandle(handle)
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    return handle
+
+
+def _unlock_index_windows(handle):
+    """Release a Windows lock and close the handle."""
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", ctypes.c_uint32),
+            ("OffsetHigh", ctypes.c_uint32),
+            ("hEvent", ctypes.c_void_p),
+        ]
+
+    overlapped = OVERLAPPED()
+    kernel32.UnlockFileEx.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32,
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(OVERLAPPED),
+    ]
+    kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped))
+    kernel32.CloseHandle(handle)
 
 
 def main():
