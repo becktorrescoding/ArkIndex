@@ -155,10 +155,6 @@ python app.py
 ```
 
 
-## Screenshots
-
-![img.png](img.png)
-
 ### Main Interface
 The application features a clean, intuitive interface:
 - **Folder Selection**: Browse buttons for easy path selection
