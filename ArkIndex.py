@@ -12,7 +12,7 @@ Run the platform installer first if you haven't already:
 """
 
 VERSION = "1.3.0"
-GITHUB_REPO = "becktorrescoding/image_to_pdf"
+GITHUB_REPO = "becktorrescoding/ArkIndex"
 
 import base64
 import gzip
@@ -28,6 +28,7 @@ import time
 import tkinter as tk
 import tkinter.ttk as ttk
 import urllib.request
+import urllib.error
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext
 
@@ -710,6 +711,19 @@ class Application(tk.Tk):
                     "Please restart the application to use it."
                 ))
 
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    # No releases yet — silently treat as up to date
+                    self.after(0, lambda: self.log(
+                        f"Version check: no releases found ({GITHUB_REPO})"
+                    ))
+                else:
+                    self.after(0, lambda: self.log(f"Update check failed: {e}"))
+                    if not silent:
+                        self.after(0, lambda: messagebox.showerror(
+                            "Update Check Failed",
+                            f"Could not check for updates:\n{e}"
+                        ))
             except Exception as e:
                 if not silent:
                     self.after(0, lambda: messagebox.showerror(
