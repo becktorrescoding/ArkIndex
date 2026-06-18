@@ -12,7 +12,7 @@ Run the platform installer first if you haven't already:
 """
 
 VERSION = "1.3.0"
-GITHUB_REPO = "becktorrescoding/ArkIndex"
+GITHUB_REPO = "becktorrescoding/image_to_pdf"
 
 import base64
 import gzip
