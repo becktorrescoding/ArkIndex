@@ -19,3 +19,5 @@
 /generate_templates.py
 # Change log
 /ChangeLog.md
+# Python bytecode cache
+__pycache__/
