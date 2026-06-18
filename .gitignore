@@ -11,11 +11,11 @@
 /inspectionProfiles/
 # App tests (personal use)
 /test_app.py
-# Change log
-/CHANGELOG.md
 # Decryption for Json index (personal use)
 /decode_index.py
 # Templates for OCR testing (personal use)
 /templates/
 # Template generator (personal use)
 /generate_templates.py
+# Change log
+/ChangeLog.md
