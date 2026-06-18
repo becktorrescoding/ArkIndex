@@ -30,7 +30,7 @@ jobs:
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
-          pip install ocrmypdf pytesseract Pillow pymupdf
+          pip install --timeout 30 --retries 2 --only-binary :all: ocrmypdf pytesseract Pillow pymupdf
 
       - name: Check non-tk imports
         run: python -c "import ocrmypdf, pytesseract, PIL, pymupdf, json, os, re, subprocess, threading, pathlib, urllib.request; print('Core imports OK')"
