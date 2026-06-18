@@ -46,4 +46,4 @@ jobs:
         run: |
           bash -n install_linux.sh && echo "  linux OK"
           bash -n install_macos.sh && echo "  macos OK"
-          bash -n install_windows.bat 2>/dev/null; echo "  skipping windows .bat check"
+          bash -n install_windows.bat 2>/dev/null && echo "  windows OK" || echo "  skipping windows .bat check"
