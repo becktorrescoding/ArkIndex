@@ -11,7 +11,7 @@ Run the platform installer first if you haven't already:
   Linux   : bash install_linux.sh
 """
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 GITHUB_REPO = "becktorrescoding/ArkIndex"
 
 import base64
