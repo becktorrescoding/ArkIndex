@@ -15,3 +15,5 @@
 /CHANGELOG.md
 # Decryption for Json index
 /decode_index.py
+# Templates for OCR testing
+/templates/
