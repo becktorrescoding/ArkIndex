@@ -71,6 +71,35 @@ def _check_python_package(package: str) -> bool:
         return False
 
 
+def _detect_system_theme() -> str:
+    """Detect OS-level dark mode preference. Returns 'light' or 'dark'."""
+    os_name = platform.system()
+    try:
+        if os_name == "Darwin":
+            r = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, text=True, timeout=2
+            )
+            return "dark" if r.stdout.strip() == "Dark" else "light"
+        elif os_name == "Windows":
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            winreg.CloseKey(key)
+            return "light" if value else "dark"
+        else:
+            r = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                capture_output=True, text=True, timeout=2,
+            )
+            return "dark" if "dark" in r.stdout.lower() else "light"
+    except Exception:
+        return "light"
+
+
 def _installer_hint() -> str:
     os_name = platform.system()
     if os_name == "Windows":
@@ -827,12 +856,13 @@ class Application(tk.Tk):
         return Path(tempfile.gettempdir()) / f"tiff_lookup_settings_{user}.json"
 
     def _save_settings(self):
-        """Persist current folders and mode to the settings file."""
+        """Persist current folders, mode, theme, and window geometry."""
         data = {
             "input_path": self.input_path.get(),
             "output_path": self.output_path.get(),
             "mode": self.mode.get(),
             "theme": self._theme.get(),
+            "geometry": self.winfo_geometry(),
         }
         try:
             with open(self._settings_path(), "w") as f:
@@ -841,12 +871,14 @@ class Application(tk.Tk):
             pass
 
     def _load_settings(self):
-        """Restore folders and mode from the settings file (if it exists)."""
+        """Restore folders, mode, theme, and window geometry from saved settings."""
         path = self._settings_path()
         try:
             with open(path) as f:
                 data = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError, OSError):
+            # First run — detect system theme as default
+            self._theme.set(_detect_system_theme())
             return
         if data.get("input_path"):
             self.input_path.set(data["input_path"])
@@ -857,6 +889,10 @@ class Application(tk.Tk):
             self.toggle_mode()
         if data.get("theme") in ("light", "dark"):
             self._theme.set(data["theme"])
+        else:
+            self._theme.set(_detect_system_theme())
+        if data.get("geometry"):
+            self.geometry(data["geometry"])
 
     def _on_close(self):
         """Save settings before quitting."""
