@@ -31,8 +31,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install ocrmypdf pytesseract Pillow pymupdf
 
-      - name: Check import
-        run: python -c "import ArkIndex; print(f'Imported OK — v{ArkIndex.VERSION}', flush=True)"
+      - name: Check imports
+        run: |
+          python -c "
+import sys
+modules = ['ocrmypdf', 'pytesseract', 'PIL', 'pymupdf',
+           'json', 'os', 're', 'subprocess', 'threading', 'pathlib',
+           'urllib.request']
+errors = []
+for m in modules:
+    try:
+        __import__(m)
+    except ImportError as e:
+        errors.append(f'  {m}: {e}')
+# tkinter may not be available in standalone Python builds on runners
+try:
+    import tkinter
+    import tkinter.ttk
+except ImportError:
+    print('  tkinter: not available (standalone build)')
+
+if errors:
+    print('Import errors:')
+    for e in errors:
+        print(e)
+    sys.exit(1)
+print('All imports OK')
+"
 
       - name: Check Python syntax
         run: |
