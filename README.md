@@ -1,5 +1,7 @@
 # ArkIndex
 
+[![CI](https://github.com/becktorrescoding/image_to_pdf/actions/workflows/ci.yml/badge.svg)](https://github.com/becktorrescoding/image_to_pdf/actions/workflows/ci.yml)
+
 A Python GUI application that combines OCR-based document search with image-to-PDF conversion capabilities. Built to help universities digitize and manage pre-digital era scanned transcripts and degrees. Features an intuitive graphical interface with two operation modes: search through image files and PDFs using Optical Character Recognition (OCR) to find specific documents, or bulk convert entire folders of images to searchable PDFs — all without needing to edit code.
 
 ## Features
@@ -27,6 +29,10 @@ A Python GUI application that combines OCR-based document search with image-to-P
 - **Export Results**: Search scores and conversion metadata can be exported to a timestamped CSV file
 - **Theme Selection**: Toggle between light and dark mode; preference is persisted between sessions
 - **Auto-Updater**: On startup, checks GitHub releases for a newer version. If found, you can download and replace the current app automatically — the renamed filename is preserved
+- **Batch Progress Bar**: Visual progress indicator with file counter during bulk operations
+- **PDF Text Layer Verification**: After OCR, verifies the output PDF actually contains searchable text and warns if empty or sparse
+- **Search Within PDFs**: Scans both images and already-converted PDFs in the output folder; results shown together in the preview window
+- **Drag & Drop / Paste**: Drop image files directly onto the window or paste from clipboard (Ctrl+V) to process them one by one
 
 ## Prerequisites
 
@@ -94,7 +100,7 @@ Or download and extract the ZIP from the GitHub page.
    ```
    You should see the Tesseract version number printed.
 
-> **Note**: If you see a `TesseractNotFoundError` when running the app, you can alternatively set the path directly in `app.py` by adding this line near the top of the file:
+> **Note**: If you see a `TesseractNotFoundError` when running the app, you can alternatively set the path directly in `ArkIndex.py` by adding this line near the top of the file:
 > ```python
 > pytesseract.pytesseract.tesseract_cmd = r'C:\Users\%USERNAME%\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
 > ```
@@ -151,7 +157,9 @@ pip install ocrmypdf pytesseract pillow pymupdf
 ### 4. Launch the Application
 
 ```bash
-python app.py
+python ArkIndex.py
+# or, if the script is executable:
+./ArkIndex.py
 ```
 
 
@@ -197,7 +205,7 @@ The application features a clean, intuitive interface:
 3. Click "Browse" to select your output folder (where PDFs will be saved)
 4. Choose your operation mode and click "Start Search"
 
-**Optional**: If you want to set default paths in the code, edit `app.py`:
+**Optional**: If you want to set default paths in the code, edit `ArkIndex.py`:
 - Modify `self.input_path` and `self.output_path` initialization in `__init__()`
 
 ## Usage
@@ -205,7 +213,9 @@ The application features a clean, intuitive interface:
 ### Running the Application
 
 ```bash
-python app.py
+python ArkIndex.py
+# or, if the script is executable:
+./ArkIndex.py
 ```
 
 A graphical window will open with the following interface:
@@ -318,7 +328,7 @@ OCR results from previous searches are cached in `file_index_python_search_engin
 
 **Scenario 1**: Find and convert a transcript for "Jane Doe" who graduated in 1998
 
-1. Launch app: `python app.py`
+1. Launch app: `python ArkIndex.py`
 2. Browse input to: `C:/University/ScannedRecords`
 3. Browse output to: `C:/University/Converted`
 4. Select **Search Mode**
@@ -329,7 +339,7 @@ OCR results from previous searches are cached in `file_index_python_search_engin
 
 **Scenario 2**: Bulk convert an entire archive of scanned degrees
 
-1. Launch app: `python app.py`
+1. Launch app: `python ArkIndex.py`
 2. Browse input to: `C:/University/DegreeArchive`
 3. Browse output to: `C:/University/Converted`
 4. Select **Bulk Convert Mode**
@@ -547,7 +557,7 @@ The GUI includes comprehensive error handling:
 All OCR and PDF processing is performed **entirely locally on your machine**. No document text, metadata, or file contents are transmitted over the internet.
 
 The only network requests made are:
-- **Auto-Updater** (opt-out by declining the update prompt): On startup, a request is sent to `api.github.com` to check for a newer version. If you choose to update, the new `app.py` is downloaded from `raw.githubusercontent.com`. No personal or document data is included in these requests.
+- **Auto-Updater** (opt-out by declining the update prompt): On startup, a request is sent to `api.github.com` to check for a newer version. If you choose to update, the new `ArkIndex.py` is downloaded from `raw.githubusercontent.com`. No personal or document data is included in these requests.
 
 | Dependency    | Data Collection | Network Access       |
 |---------------|-----------------|----------------------|
@@ -576,7 +586,7 @@ This makes the tool suitable for handling sensitive documents such as university
 **Symptom**: Double-clicking does nothing or window appears then closes
 
 **Solutions**:
-- Run from terminal to see error messages: `python app.py`
+- Run from terminal to see error messages: `python ArkIndex.py` (or `./ArkIndex.py` if the script is executable)
 - Check Python version (requires 3.9+)
 - Verify tkinter is installed: `python -m tkinter` (should open test window)
 
@@ -586,7 +596,7 @@ This makes the tool suitable for handling sensitive documents such as university
 **Solutions**:
 - Ensure Tesseract OCR is installed — see the [Installation](#installation) section for your OS
 - Open a terminal and run `tesseract --version` to confirm it's on your PATH
-- **Windows**: If it's still not found after adding to PATH, open a fresh Command Prompt (the old one won't pick up the change) and try again. Alternatively, set the path directly in `app.py`:
+- **Windows**: If it's still not found after adding to PATH, open a fresh Command Prompt (the old one won't pick up the change) and try again. Alternatively, set the path directly in `ArkIndex.py`:
   ```python
   pytesseract.pytesseract.tesseract_cmd = r'C:\Users\%USERNAME%\AppData\Local\Programs\Tesseract-OCR\tesseract.exe'
   ```
@@ -641,9 +651,6 @@ This makes the tool suitable for handling sensitive documents such as university
 
 Potential improvements for future versions:
 
-### GUI Improvements
-- **Drag & Drop**: Drop files directly into window
-
 ### Functionality
 - **Custom Match Threshold**: Slider to adjust partial match percentage
 
@@ -655,7 +662,7 @@ Potential improvements for future versions:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-Copyright (c) 2025 Tomás beck Torres
+Copyright (c) 2026 Tomás beck Torres
 
 ## Contributing
 
