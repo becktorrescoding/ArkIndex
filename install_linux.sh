@@ -28,12 +28,54 @@ SUDO=""
 # 1. Refresh package index
 echo ""
 echo "[1/5] Refreshing package index..."
+case "$PKG_MANAGER" in
+    apt)     $SUDO apt-get update -qq ;;
+    dnf)     $SUDO dnf check-update -q || true ;;
+    pacman)  $SUDO pacman -Sy --noconfirm ;;
+esac
+ok "Package index refreshed."
+
 # 2. Python 3.9+
 echo ""
 echo "[2/5] Checking for Python 3.9+..."
+PYTHON=""
+for candidate in python3.14 python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
+    if command -v "$candidate" &>/dev/null; then
+        ver=$("$candidate" --version 2>&1 | grep -oP '\d+\.\d+')
+        major="${ver%.*}"
+        minor="${ver#*.}"
+        if [[ "$major" -ge 3 && "$minor" -ge 9 ]] 2>/dev/null; then
+            PYTHON="$candidate"
+            break
+        fi
+    fi
+done
+if [[ -z "$PYTHON" ]]; then
+    info "Installing Python 3..."
+    case "$PKG_MANAGER" in
+        apt)     $SUDO apt-get install -y python3 python3-pip ;;
+        dnf)     $SUDO dnf install -y python3 python3-pip ;;
+        pacman)  $SUDO pacman -S --noconfirm python python-pip ;;
+    esac
+    PYTHON="python3"
+fi
+ok "Python found: $($PYTHON --version)"
+
 # 3. Tesseract
 echo ""
 echo "[3/5] Checking for Tesseract OCR..."
+if ! command -v tesseract &>/dev/null; then
+    info "Installing Tesseract OCR..."
+    case "$PKG_MANAGER" in
+        apt)     $SUDO apt-get install -y tesseract-ocr ;;
+        dnf)     $SUDO dnf install -y tesseract ;;
+        pacman)  $SUDO pacman -S --noconfirm tesseract ;;
+    esac
+    ok "Tesseract installed."
+else
+    ok "Tesseract found: $(tesseract --version 2>&1 | head -1)"
+fi
+
 # 4. Ghostscript
 echo ""
 echo "[4/5] Checking for Ghostscript..."
@@ -99,6 +141,6 @@ fi
 echo ""
 echo "============================================================"
 echo "  Installation complete!"
-echo "  Run the app with:  $PYTHON app.py"
+echo "  Run the app with:  $PYTHON ArkIndex.py"
 echo "============================================================"
 echo ""

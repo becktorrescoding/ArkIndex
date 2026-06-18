@@ -149,7 +149,7 @@ echo      Python packages installed.
 echo.
 echo ============================================================
 echo   Installation complete!
-echo   Run the app with:  python app.py
+echo   Run the app with:  python ArkIndex.py
 echo.
 echo   NOTE: If tools are not found, open a fresh terminal so
 echo   PATH changes take effect.
