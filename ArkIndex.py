@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Image to PDF Converter
 ----------------------
@@ -25,6 +26,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.ttk as ttk
 import urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext
@@ -151,6 +153,8 @@ _MONTH_NAME_PAT = (
 _DATE_NAMED = _MONTH_NAME_PAT + r"[\s,]+\d{1,2}[\s,]+\d{2,4}"
 _DATE_NUMERIC = r"\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}"
 
+_DAYS_IN_MONTH = [0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
 
 def _parse_date_to_tuple(raw: str) -> tuple:
     """
@@ -168,10 +172,10 @@ def _parse_date_to_tuple(raw: str) -> tuple:
     m = re.match(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$", raw)
     if m:
         month, day, year = int(m.group(1)), int(m.group(2)), m.group(3)
-        if not (1 <= month <= 12 and 1 <= day <= 31):
+        if not (1 <= month <= 12 and 1 <= day <= _DAYS_IN_MONTH[month]):
             return 9999, 99, 99
         if len(year) == 2:
-            year = "19" + year
+            year = "19" + year if int(year) >= 20 else "20" + year
         return int(year), month, day
 
     parts = [p for p in re.split(r"[\s,]+", raw) if p]
@@ -184,7 +188,9 @@ def _parse_date_to_tuple(raw: str) -> tuple:
         if month is None:
             return 9999, 99, 99
         if len(year) == 2:
-            year = "19" + year
+            year = "19" + year if int(year) >= 20 else "20" + year
+        if not (1 <= int(day) <= _DAYS_IN_MONTH[month]):
+            return 9999, 99, 99
         return int(year), month, int(day)
 
     return 9999, 99, 99
@@ -267,6 +273,8 @@ class Application(tk.Tk):
         self._conversion_log = []
         self._theme = tk.StringVar(value="light")
         self._title_label = None
+        self._progress_total = 0
+        self._progress_current = 0
 
         self.create_widgets()
         self._load_settings()
@@ -335,6 +343,14 @@ class Application(tk.Tk):
         tk.Button(self.path_frame, text="Import Index", command=self._import_index_ui, font=("Arial", 8)).grid(
             row=2, column=2, padx=5, pady=3, sticky="w"
         )
+
+        self._dnd_label = tk.Label(
+            self.path_frame,
+            text="Drag & drop folders or files here",
+            font=("Arial", 8),
+            fg="#888",
+        )
+        self._dnd_label.grid(row=3, column=0, columnspan=3, pady=(4, 0))
 
         self.mode_frame = tk.LabelFrame(
             self,
@@ -435,6 +451,17 @@ class Application(tk.Tk):
         )
         self.export_button.pack(side="left", padx=5)
 
+        progress_frame = tk.Frame(self, padx=20, pady=5)
+        progress_frame.pack(fill="x")
+        self.progress_bar = ttk.Progressbar(
+            progress_frame, mode="determinate", length=200
+        )
+        self.progress_bar.pack(side="left", padx=(0, 10))
+        self.progress_label = tk.Label(
+            progress_frame, text="Ready", font=("Arial", 9), anchor="w"
+        )
+        self.progress_label.pack(side="left", fill="x", expand=True)
+
         log_frame = tk.Frame(self, padx=20, pady=10)
         log_frame.pack(fill="both", expand=True)
 
@@ -443,6 +470,122 @@ class Application(tk.Tk):
         self.log_text = scrolledtext.ScrolledText(log_frame, height=10, width=70)
         self.log_text.pack(fill="both", expand=True)
         self.log_text.configure(state="disabled")
+
+        self._setup_drag_drop()
+
+    # ------------------------------------------------------------------
+    # Progress bar helpers
+    # ------------------------------------------------------------------
+    def _update_progress(self, current, total):
+        """Thread-safe progress bar update."""
+        self._progress_current = current
+        self._progress_total = total
+
+        def _update():
+            if total > 0:
+                self.progress_bar["value"] = (current / total) * 100
+            self.progress_label.config(
+                text=f"{current} / {total} files"
+            )
+
+        if threading.current_thread() is not threading.main_thread():
+            self.after_idle(_update)
+        else:
+            _update()
+
+    def _reset_progress(self):
+        """Reset progress bar to ready state. Thread-safe."""
+        self._progress_current = 0
+        self._progress_total = 0
+
+        def _reset():
+            self.progress_bar["value"] = 0
+            self.progress_label.config(text="Ready")
+
+        if threading.current_thread() is not threading.main_thread():
+            self.after_idle(_reset)
+        else:
+            _reset()
+
+    # ------------------------------------------------------------------
+    # Drag & drop / Paste helpers
+    # ------------------------------------------------------------------
+    def _setup_drag_drop(self):
+        """Register the path frame as a file-drop target via TkDND."""
+        try:
+            self.tk.eval("package require tkdnd 2.0")
+            self.tk.call("::tkdnd::drop_target", "register", self.path_frame._w)
+            self.tk.createcommand("_arkindex_dnd_callback", self._on_file_drop)
+            self.tk.eval(
+                f"bind {self.path_frame._w} <<Drop>> "
+                f"{{+_arkindex_dnd_callback %D}}"
+            )
+            self._dnd_label.config(text="Drop folders or image/PDF files here")
+            self.log("Drag & drop ready.")
+        except tk.TclError:
+            self._dnd_label.config(text="Ctrl+V to paste file/folder path")
+
+        self.bind_all("<Control-v>", lambda e: self._paste_from_clipboard())
+        self.bind_all("<Control-V>", lambda e: self._paste_from_clipboard())
+
+    def _on_file_drop(self, data):
+        """Handle files/folders dropped on the path frame."""
+        try:
+            paths = list(self.tk.splitlist(data))
+        except Exception:
+            paths = [data]
+        if not paths:
+            return
+        path = paths[0]
+        if os.path.isdir(path):
+            self.input_path.set(path)
+            self.log(f"Input folder set via drop: {path}")
+        elif os.path.isfile(path):
+            self._process_dropped_file(path)
+
+    def _paste_from_clipboard(self):
+        """Read clipboard and handle as a file/folder path."""
+        try:
+            raw = self.clipboard_get().strip()
+        except tk.TclError:
+            return
+        if not raw:
+            return
+        # Strip surrounding quotes if present (common when copying from file manager)
+        path = raw.strip("\"'")
+        if os.path.isdir(path):
+            self.input_path.set(path)
+            self.log(f"Input folder set via paste: {path}")
+        elif os.path.isfile(path):
+            self._process_dropped_file(path)
+
+    def _process_dropped_file(self, file_path):
+        """Search-convert a single dropped file."""
+        if not self.output_path.get():
+            self.after(0, lambda: messagebox.showerror(
+                "No Output Folder",
+                "Please set an output folder first."
+            ))
+            self.log("Dropped file ignored — no output folder set.")
+            return
+        self.log(f"Processing dropped file: {os.path.basename(file_path)}")
+        self._stop_event.clear()
+        self._pause_event.set()
+        self.start_button.config(state="disabled")
+        self.pause_button.config(state="normal", text="Pause", bg="#e67e00")
+        self.stop_button.config(state="normal")
+        def run():
+            try:
+                self._update_progress(0, 1)
+                self.convert_image(file_path)
+                self._update_progress(1, 1)
+                self.log("Dropped file converted successfully.")
+            except Exception as e:
+                self.log(f"Error processing dropped file: {e}")
+            finally:
+                self._reset_progress()
+                self.after(0, self._reset_buttons)
+        threading.Thread(target=run, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Pause / Stop / Mode helpers
@@ -530,9 +673,10 @@ class Application(tk.Tk):
                     self.after(0, lambda: self.log(f"Update to v{latest} declined."))
                     return
 
-                # Download the new app.py from the release branch
+                # Download the new source from the release tag (stable, branch-independent)
+                tag = data.get("tag_name", "")
                 raw_url = (
-                    f"https://raw.githubusercontent.com/{GITHUB_REPO}/master/app.py"
+                    f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/ArkIndex.py"
                 )
                 req = urllib.request.Request(raw_url)
                 with urllib.request.urlopen(req, timeout=30) as resp:
@@ -918,14 +1062,17 @@ class Application(tk.Tk):
         ]
         total = len(all_files)
         self.log(f"Scanning {total} file(s)...")
+        self._update_progress(0, total)
 
         index = self._load_index()
         self._search_index = index
         cache_hits = 0
 
         for i, file_path in enumerate(all_files, start=1):
+            self._update_progress(i, total)
             if self._check_pause_stop():
                 self.log("Search stopped by user.")
+                self._reset_progress()
                 break
 
             image = os.path.basename(file_path)
@@ -970,8 +1117,53 @@ class Application(tk.Tk):
         if total > 0:
             self.log(f"Index cache hits: {cache_hits}/{total}")
 
+        # -- Also search already-converted PDFs in the output folder ----
+        output_folder = self.output_path.get()
+        seen_paths = set(all_files)
+        pdf_hits = 0
+        if output_folder and os.path.isdir(output_folder):
+            self.log("Searching already-converted PDFs...")
+            pdf_files = []
+            for root, dirs, files in os.walk(output_folder, followlinks=False):
+                for file in files:
+                    fp = os.path.join(root, file)
+                    if file.lower().endswith(".pdf") and fp not in seen_paths:
+                        pdf_files.append(fp)
+            pdf_total = len(pdf_files)
+            self._update_progress(0, total + pdf_total)
+            for i, file_path in enumerate(pdf_files, start=1):
+                self._update_progress(total + i, total + pdf_total)
+                if self._check_pause_stop():
+                    self._reset_progress()
+                    break
+                try:
+                    doc = pymupdf.open(file_path)
+                    try:
+                        text = "".join(page.get_text() for page in doc)
+                    finally:
+                        doc.close()
+                    if not text.strip():
+                        continue
+                    matched_words = [
+                        word for word in keywords if self._has_valid_match(text, word)
+                    ]
+                    count = len(matched_words)
+                    if count > 0:
+                        name_ctx = sum(
+                            1 for kw in matched_words if self._in_name_context(text, kw)
+                        )
+                        scores[file_path] = name_ctx * 1000 + count
+                        pdf_hits += 1
+                        ctx_info = f", {name_ctx}/{len(keywords)} in name context" if name_ctx else ""
+                        self.log(f"PDF match ({count}/{len(keywords)}{ctx_info}): {file_path}")
+                except Exception as e:
+                    self.log(f"Error reading PDF {file_path}: {e}")
+            if pdf_hits:
+                self.log(f"Found {pdf_hits} matching PDF(s) in output folder.")
+
         if not scores:
             self.log("No matching image(s) found.")
+            self._reset_progress()
             self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
             self.after(0, self._reset_buttons)
             return
@@ -989,9 +1181,11 @@ class Application(tk.Tk):
             matches = self.filter_year(year, matches)
 
         if matches and not self._stop_event.is_set():
+            self._reset_progress()
             self.log(f"Found {len(matches)} matching image(s)...")
             self.after(0, self.show_preview_window, matches)
         else:
+            self._reset_progress()
             if self._stop_event.is_set():
                 self.log("Search stopped - no preview shown.")
             else:
@@ -1014,7 +1208,7 @@ class Application(tk.Tk):
                     w, h = img.size
                     if w <= 40 or h <= 60:
                         continue
-                    top_third = img.crop((0, 0, w, h // 3))
+                    top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
                     text = pytesseract.image_to_string(top_third.convert("RGB"))
                 if year.lower() in text.lower():
                     filtered.append(file_path)
@@ -1050,8 +1244,10 @@ class Application(tk.Tk):
 
         self.log(f"Found {total_files} images to convert...")
         self.log("")
+        self._update_progress(0, total_files)
 
         stopped = False
+        processed = 0
         for root, dirs, files in os.walk(input_folder, followlinks=False):
             if stopped:
                 break
@@ -1070,6 +1266,8 @@ class Application(tk.Tk):
                         errors += 1
                         self.log(f"Error: {str(e)}")
                         self.log("")
+                    processed += 1
+                    self._update_progress(processed, total_files)
 
         self.log("=" * 50)
         if stopped:
@@ -1080,6 +1278,7 @@ class Application(tk.Tk):
         self.log(f"Errors: {errors}")
         self.log("=" * 50)
 
+        self._reset_progress()
         label = "Stopped" if stopped else "Complete"
         details = f"Converted {converted} of {total_files} image(s)."
         if errors:
@@ -1097,6 +1296,7 @@ class Application(tk.Tk):
         self.preview_win.grab_set()
 
         def on_close():
+            self._reset_progress()
             self.after(0, self._reset_buttons)
             self.preview_win.destroy()
 
@@ -1227,14 +1427,16 @@ class Application(tk.Tk):
             self.preview_win.destroy()
 
             def run():
-                done = 0
-                for f in selected:
+                total = len(selected)
+                self._update_progress(0, total)
+                for idx, f in enumerate(selected, start=1):
                     self.convert_image(f)
-                    done += 1
-                self.log(f"Conversion complete - {done} file(s) converted")
+                    self._update_progress(idx, total)
+                self._reset_progress()
+                self.log(f"Conversion complete - {total} file(s) converted")
                 self.after(0, lambda: messagebox.showinfo(
                     "Success",
-                    f"{done} file(s) successfully converted to PDF.",
+                    f"{total} file(s) successfully converted to PDF.",
                 ))
                 self.after(0, self._reset_buttons)
 
@@ -1320,9 +1522,12 @@ class Application(tk.Tk):
         try:
             if path.endswith(".pdf"):
                 doc = pymupdf.open(file_path)
-                page = doc[0]
-                pix = page.get_pixmap(dpi=300)
-                return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                try:
+                    page = doc[0]
+                    pix = page.get_pixmap(dpi=300)
+                    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                finally:
+                    doc.close()
             return Image.open(file_path)
         except Exception as e:
             self.log(f"Could not open image: {file_path} — {e}")
@@ -1402,9 +1607,11 @@ class Application(tk.Tk):
                 try:
                     existing_text = ""
                     doc = pymupdf.open(output_file)
-                    for page in doc:
-                        existing_text += page.get_text()
-                    doc.close()
+                    try:
+                        for page in doc:
+                            existing_text += page.get_text()
+                    finally:
+                        doc.close()
                     ratio = self._text_similarity(text, existing_text)
                     if ratio >= 0.85:
                         self.log(f"  Skipped — duplicate content ({ratio:.0%} match).")
@@ -1422,11 +1629,14 @@ class Application(tk.Tk):
                     force_ocr=True,
                     output_type="pdf",
                 )
+                self._verify_text_layer(temp_file, text)
                 main_doc = pymupdf.open(output_file)
                 temp_doc = pymupdf.open(temp_file)
-                main_doc.insert_pdf(temp_doc)
-                main_doc.close()
-                temp_doc.close()
+                try:
+                    main_doc.insert_pdf(temp_doc)
+                finally:
+                    main_doc.close()
+                    temp_doc.close()
                 os.remove(temp_file)
                 self.log("  Appended.")
                 return True
@@ -1443,6 +1653,7 @@ class Application(tk.Tk):
                         force_ocr=True,
                         output_type="pdf",
                     )
+                    self._verify_text_layer(output_file, text)
                     self.log("  Replaced.")
                     return True
 
@@ -1455,11 +1666,14 @@ class Application(tk.Tk):
                     force_ocr=True,
                     output_type="pdf",
                 )
+                self._verify_text_layer(temp_file, text)
                 main_doc = pymupdf.open(output_file)
                 temp_doc = pymupdf.open(temp_file)
-                main_doc.insert_pdf(temp_doc)
-                main_doc.close()
-                temp_doc.close()
+                try:
+                    main_doc.insert_pdf(temp_doc)
+                finally:
+                    main_doc.close()
+                    temp_doc.close()
                 os.remove(temp_file)
                 self.log("  Appended.")
                 return True
@@ -1471,6 +1685,34 @@ class Application(tk.Tk):
                 force_ocr=True,
                 output_type="pdf",
             )
+            self._verify_text_layer(output_file, text)
+
+    # ------------------------------------------------------------------
+    # PDF text layer verification
+    # ------------------------------------------------------------------
+    def _verify_text_layer(self, pdf_path, source_text):
+        """Check that the output PDF has a searchable text layer.
+        Logs a warning if the extracted text is empty or significantly
+        shorter than the source OCR text. Never raises exceptions."""
+        try:
+            doc = pymupdf.open(pdf_path)
+            try:
+                extracted = "".join(page.get_text() for page in doc)
+            finally:
+                doc.close()
+            if not extracted.strip():
+                self.log(
+                    f"  Warning: output PDF has no extractable text layer — "
+                    f"OCR may have failed silently: {os.path.basename(pdf_path)}"
+                )
+            elif source_text and len(extracted) < len(source_text) * 0.1:
+                self.log(
+                    f"  Warning: output PDF text layer is very sparse "
+                    f"({len(extracted)} vs {len(source_text)} chars) — "
+                    f"OCR may be incomplete: {os.path.basename(pdf_path)}"
+                )
+        except Exception as e:
+            self.log(f"  Warning: could not verify text layer: {e}")
 
     # ------------------------------------------------------------------
     # Search index
@@ -1688,7 +1930,7 @@ class Application(tk.Tk):
                 self.log(f"  Using search-field name: {raw_name!r}")
         if not raw_name:
             self.log("  Could not extract name - routing to Error/Name.")
-            return "", Path("Error/Name"), "", "", "", ""
+            return "Unknown", Path("Error/Name"), "", "", "", ""
         name = self._format_name(raw_name)
 
         # -- Detect document type & degree --------------------------
@@ -1698,7 +1940,7 @@ class Application(tk.Tk):
         for pattern in (
             r"(Associate\s+in\s+(?:\S+\s*){1,2})",
             r"(Bachelor\s+of\s+Science\s+in\s+(?:\S+\s*){1,2})",
-            r"(Certificate\s+of\s+Graduation)",
+            r"(Certificate\s+of\s+Graduation\s+)",
         ):
             m = re.search(pattern, text, re.IGNORECASE)
             if m:
@@ -1755,7 +1997,7 @@ class Application(tk.Tk):
         # -- Extract date -------------------------------------------
         date_pattern = r"(" + _DATE_NAMED + r"|" + _DATE_NUMERIC + r")"
         if is_degree:
-            context_pat = r"Degree[:\s]*?" + date_pattern
+            context_pat = r"degree\s+received[^\n]*?" + date_pattern
         else:
             context_pat = r"date\s+of\s+admission[:\s]+" + date_pattern
 
