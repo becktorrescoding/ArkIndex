@@ -37,7 +37,7 @@ CURRENT_SCRIPT = Path(__file__).resolve()
 import ocrmypdf
 import pymupdf
 import pytesseract
-from PIL import Image, ImageTk
+from PIL import Image, ImageFilter, ImageOps, ImageTk
 
 
 # ---------------------------------------------------------------------------
@@ -956,6 +956,18 @@ class Application(tk.Tk):
             self.log(f"Export failed: {e}")
             messagebox.showerror("Export Failed", str(e), parent=self)
 
+    def _preprocess_for_ocr(self, img):
+        """Enhance image for better OCR accuracy.
+        
+        Applies grayscale, autocontrast, denoise, and sharpen using Pillow.
+        Returns an RGB PIL Image ready for pytesseract.
+        """
+        img = img.convert("L")
+        img = ImageOps.autocontrast(img, cutoff=3)
+        img = img.filter(ImageFilter.MedianFilter(size=3))
+        img = img.filter(ImageFilter.SHARPEN)
+        return img.convert("RGB")
+
     def browse_input(self):
         folder = filedialog.askdirectory(title="Select Input Folder")
         if folder:
@@ -1141,7 +1153,7 @@ class Application(tk.Tk):
                         self.log(f"  Skipped — image too small for OCR: {image}")
                         continue
                     top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
-                    text = pytesseract.image_to_string(top_third.convert("RGB"))
+                    text = pytesseract.image_to_string(self._preprocess_for_ocr(top_third))
                     self._index_entry(index, file_path, ocr_text=text)
                 matched_words = [
                     word for word in keywords if self._has_valid_match(text, word)
@@ -1259,7 +1271,7 @@ class Application(tk.Tk):
                     if w <= 40 or h <= 60:
                         continue
                     top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
-                    text = pytesseract.image_to_string(top_third.convert("RGB"))
+                    text = pytesseract.image_to_string(self._preprocess_for_ocr(top_third))
                 if year.lower() in text.lower():
                     filtered.append(file_path)
                 else:
@@ -1622,7 +1634,7 @@ class Application(tk.Tk):
             self.log("  Skipped — image too small for OCR crop region.")
             return False
         top_third = img.crop((20, 20, w - 20, (h // 3) + 60))
-        text = pytesseract.image_to_string(top_third.convert("RGB"))
+        text = pytesseract.image_to_string(self._preprocess_for_ocr(top_third))
         file_name, folder, degree_type, course, date_str, year_str = self.generate_filename(text)
 
         self._conversion_log.append({
@@ -1736,6 +1748,7 @@ class Application(tk.Tk):
                 output_type="pdf",
             )
             self._verify_text_layer(output_file, text)
+        return False
 
     # ------------------------------------------------------------------
     # PDF text layer verification
@@ -1820,7 +1833,7 @@ class Application(tk.Tk):
                 "Cancel = Stop",
                 parent=self,
             )
-            if ans is True:
+            if ans:
                 result[0] = "create"
             elif ans is False:
                 import_path = filedialog.askopenfilename(
