@@ -11,7 +11,7 @@ Run the platform installer first if you haven't already:
   Linux   : bash install_linux.sh
 """
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 GITHUB_REPO = "becktorrescoding/ArkIndex"
 
 import base64
@@ -775,6 +775,7 @@ class Application(tk.Tk):
                     tmp.write(new_code)
                     tmp.close()
                     os.replace(tmp.name, str(CURRENT_SCRIPT))
+                    print("Path: ", CURRENT_SCRIPT)
                 except Exception:
                     try:
                         os.unlink(tmp.name)
