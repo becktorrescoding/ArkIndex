@@ -847,6 +847,10 @@ class Application(tk.Tk):
                 child.configure(bg=theme["bg"], fg=theme["fg"],
                               selectcolor=theme["bg"],
                               activebackground=theme["bg"])
+            elif cls == "Checkbutton":
+                child.configure(bg=theme["bg"], fg=theme["fg"],
+                              selectcolor=theme["bg"],
+                              activebackground=theme["bg"])
             elif cls == "Button":
                 if child not in (
                     self.start_button,
