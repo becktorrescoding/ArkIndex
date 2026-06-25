@@ -30,6 +30,7 @@ import tkinter as tk
 import tkinter.ttk as ttk
 import urllib.request
 import urllib.error
+import argparse
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext
 
@@ -278,6 +279,29 @@ THEMES = {
 }
 
 # ---------------------------------------------------------------------------
+# Minimal StringVar / BooleanVar stand-ins for headless mode
+# ---------------------------------------------------------------------------
+class _StringVar:
+    """Provides get()/set() like tk.StringVar without Tkinter."""
+    def __init__(self, value=""):
+        self._value = value
+    def get(self):
+        return self._value
+    def set(self, value):
+        self._value = value
+
+
+class _BooleanVar:
+    """Provides get()/set() like tk.BooleanVar without Tkinter."""
+    def __init__(self, value=True):
+        self._value = value
+    def get(self):
+        return self._value
+    def set(self, value):
+        self._value = value
+
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 class Application(tk.Tk):
@@ -295,6 +319,7 @@ class Application(tk.Tk):
         self.valid_ext = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".TIF", ".tiff", ".tif")
         self.search_output_pdfs = tk.BooleanVar(value=False)
 
+        self._headless = False
         self._pause_event = threading.Event()
         self._pause_event.set()
         self._stop_event = threading.Event()
@@ -1085,7 +1110,8 @@ class Application(tk.Tk):
                 self.bulk_mode()
         except Exception as e:
             self.log(f"Error: {str(e)}")
-            self.after(0, lambda e=e: messagebox.showerror("Error", str(e)))
+            if not self._headless:
+                self.after(0, lambda e=e: messagebox.showerror("Error", str(e)))
         finally:
             if self.mode.get() == "bulk":
                 self.after(0, self._reset_buttons)
@@ -1298,8 +1324,9 @@ class Application(tk.Tk):
         if not scores:
             self.log("No matching image(s) found.")
             self._reset_progress()
-            self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
             self.after(0, self._reset_buttons)
+            if not self._headless:
+                self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
             return
 
         best = max(scores.values())
@@ -1324,7 +1351,8 @@ class Application(tk.Tk):
                 self.log("Search stopped - no preview shown.")
             else:
                 self.log("No matching image(s) found.")
-                self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
+                if not self._headless:
+                    self.after(0, lambda: messagebox.showerror("No Results", "No matching image(s) found."))
             self.after(0, self._reset_buttons)
 
     def filter_year(self, year, images):
@@ -1413,11 +1441,12 @@ class Application(tk.Tk):
         self.log("=" * 50)
 
         self._reset_progress()
-        label = "Stopped" if stopped else "Complete"
-        details = f"Converted {converted} of {total_files} image(s)."
-        if errors:
-            details += f"\nErrors: {errors}"
-        self.after(0, lambda lbl=label: messagebox.showinfo(lbl, details))
+        if not self._headless:
+            label = "Stopped" if stopped else "Complete"
+            details = f"Converted {converted} of {total_files} image(s)."
+            if errors:
+                details += f"\nErrors: {errors}"
+            self.after(0, lambda lbl=label: messagebox.showinfo(lbl, details))
 
     # ------------------------------------------------------------------
     # Preview window
@@ -2174,6 +2203,201 @@ class Application(tk.Tk):
         return file_name, folder, doc_folder, course_text, date_str, year_str
 
 
+# ---------------------------------------------------------------------------
+# Headless app (CLI mode)
+# ---------------------------------------------------------------------------
+class HeadlessApp(Application):
+    """Headless equivalent of Application for CLI mode.
+    
+    Inherits all core processing logic from Application but overrides
+    every method that depends on Tkinter.
+    """
+
+    def __init__(self, input_dir, output_dir, name="", year="", search_output=False):
+        self._headless = True
+        self.input_path = _StringVar(input_dir)
+        self.output_path = _StringVar(output_dir)
+        self.search_name = _StringVar(name)
+        self.search_year = _StringVar(year)
+        self.search_output_pdfs = _BooleanVar(search_output)
+        self.mode = _StringVar("search")
+        self.valid_ext = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".TIF", ".tiff", ".tif")
+        self._pause_event = threading.Event()
+        self._pause_event.set()
+        self._stop_event = threading.Event()
+        self._search_index = None
+        self._log_file = None
+        self._last_scores = None
+        self._last_keywords = None
+        self._conversion_log = []
+        self._theme = _StringVar("light")
+        self._title_label = None
+        self._progress_total = 0
+        self._progress_current = 0
+
+    def log(self, message):
+        print(message)
+
+    def _write_log_file(self, message):
+        if not self._log_file:
+            out = self.output_path.get().strip()
+            if not out:
+                return
+            try:
+                ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+                log_dir = Path(out) / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                self._log_file = log_dir / f"session_log_{ts}.txt"
+            except OSError:
+                return
+        try:
+            with open(self._log_file, "a") as f:
+                f.write(f"{message}\n")
+        except OSError:
+            pass
+
+    def _update_progress(self, current, total):
+        if total:
+            print(f"\rProgress: {current}/{total}", end="", file=sys.stderr)
+            if current == total:
+                print(file=sys.stderr)
+
+    def _reset_progress(self):
+        pass
+
+    def after(self, ms, func, *args):
+        try:
+            if callable(func):
+                func(*args)
+        except Exception:
+            pass
+
+    def after_idle(self, func, *args):
+        try:
+            if callable(func):
+                func(*args)
+        except Exception:
+            pass
+
+    def update_idletasks(self):
+        pass
+
+    def _reset_buttons(self):
+        pass
+
+    def _check_pause_stop(self):
+        return False
+
+    def _ensure_index(self):
+        return True
+
+    def _prompt_replace_or_append(self, file_name):
+        return "replace"
+
+    def matches_found(self, matches):
+        year = self.search_year.get()
+        if year and matches:
+            self.log(f"Filtering by year provided: {year}")
+            matches = self.filter_year(year, matches)
+        if matches:
+            self._reset_progress()
+            self.log(f"Found {len(matches)} matching file(s):")
+            for m in matches:
+                self.log(f"  {m}")
+        else:
+            self._reset_progress()
+            self.log("No matching file(s) found.")
+
+    def _check_for_updates(self, silent=True):
+        pass
+
+    def _load_settings(self):
+        pass
+
+    def _apply_theme(self):
+        pass
+
+    def _on_close(self):
+        pass
+
+    def _export_results(self, output_path=None):
+        if not self._last_scores and not self._conversion_log:
+            self.log("No results to export.")
+            return
+        if output_path is None:
+            output_path = f"results_{time.strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+        try:
+            with open(output_path, "w", newline="") as f:
+                import csv
+                writer = csv.writer(f)
+                if self._last_scores:
+                    writer.writerow(["File Path", "Score"])
+                    for fp, score in sorted(
+                        self._last_scores.items(), key=lambda x: x[1], reverse=True
+                    ):
+                        writer.writerow([fp, score])
+                    writer.writerow([])
+                if self._conversion_log:
+                    writer.writerow(["Source File", "Output File", "Degree Type",
+                                     "Course", "Date", "Year"])
+                    for entry in self._conversion_log:
+                        writer.writerow([
+                            entry["source"], entry["output"], entry["degree_type"],
+                            entry["course"], entry["date"], entry["year"],
+                        ])
+            self.log(f"Results exported to {output_path}")
+        except OSError as e:
+            self.log(f"Export failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing & dispatch
+# ---------------------------------------------------------------------------
+def _cli_dispatch(args):
+    search_output = getattr(args, "search_output", True)
+    if args.command == "search":
+        app = HeadlessApp(args.input, args.output, args.name, args.year or "",
+                          search_output=search_output)
+        app.mode.set("search")
+        app.search_mode()
+    elif args.command == "convert":
+        app = HeadlessApp(args.input, args.output)
+        app.mode.set("bulk")
+        app.bulk_mode()
+    elif args.command == "export":
+        app = HeadlessApp(args.input, args.output, args.name, args.year or "",
+                          search_output=search_output)
+        app.mode.set("search")
+        app.search_mode()
+        app._export_results(args.output_file)
+
+
+def _build_parser():
+    parser = argparse.ArgumentParser(prog="ArkIndex")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sp = sub.add_parser("search", help="Search for documents by name")
+    sp.add_argument("input", help="Input folder")
+    sp.add_argument("output", help="Output folder")
+    sp.add_argument("name", help="Name to search (First Last)")
+    sp.add_argument("--year", help="Filter by year (yyyy)")
+    sp.add_argument("--search-output", dest="search_output",
+                    action="store_true", default=False,
+                    help="Also search already-converted PDFs in output folder")
+    sp = sub.add_parser("convert", help="Bulk-convert images to searchable PDFs")
+    sp.add_argument("input", help="Input folder")
+    sp.add_argument("output", help="Output folder")
+    sp = sub.add_parser("export", help="Search and export results to CSV")
+    sp.add_argument("input", help="Input folder")
+    sp.add_argument("output", help="Output folder")
+    sp.add_argument("name", help="Name to search (First Last)")
+    sp.add_argument("--year", help="Filter by year (yyyy)")
+    sp.add_argument("--output-file", "-o", help="Output CSV file path")
+    sp.add_argument("--search-output", dest="search_output",
+                    action="store_true", default=False,
+                    help="Also search already-converted PDFs in output folder")
+    return parser
+
+
 def _lock_index_windows(lock_path, shared):
     """Open/create a lock file and acquire a lock via LockFileEx.
 
@@ -2255,8 +2479,11 @@ def _unlock_index_windows(handle):
 
 
 def main():
-    app = Application()
-    app.mainloop()
+    if len(sys.argv) > 1:
+        _cli_dispatch(_build_parser().parse_args())
+    else:
+        app = Application()
+        app.mainloop()
 
 
 if __name__ == "__main__":
