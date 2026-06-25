@@ -18,6 +18,7 @@ import base64
 import gzip
 import importlib
 import json
+import math
 import os
 import platform
 import re
@@ -956,12 +957,54 @@ class Application(tk.Tk):
             self.log(f"Export failed: {e}")
             messagebox.showerror("Export Failed", str(e), parent=self)
 
+    def _deskew(self, img):
+        """Detect and correct skew angle using PCA on pixel coordinates."""
+        w, h = img.size
+        if w * h < 1000:
+            return img
+        scale = min(1000.0 / w, 1000.0 / h, 1.0)
+        small = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+        if small.mode != "L":
+            small = small.convert("L")
+        small = ImageOps.autocontrast(small, cutoff=5)
+        arr = bytearray(small.tobytes())
+        coords = []
+        stride = small.width
+        for i, px in enumerate(arr):
+            if px < 64:
+                y, x = divmod(i, stride)
+                coords.append((x, y))
+        if len(coords) < 200:
+            return img
+        n = len(coords)
+        mx = sum(p[0] for p in coords) / n
+        my = sum(p[1] for p in coords) / n
+        cxx = sum((p[0] - mx) ** 2 for p in coords) / (n - 1)
+        cyy = sum((p[1] - my) ** 2 for p in coords) / (n - 1)
+        cxy = sum((p[0] - mx) * (p[1] - my) for p in coords) / (n - 1)
+        trace = cxx + cyy
+        det = cxx * cyy - cxy * cxy
+        discriminant = trace * trace - 4 * det
+        if discriminant <= 0:
+            return img
+        lambda1 = (trace + math.sqrt(discriminant)) / 2
+        angle_deg = math.degrees(math.atan2(lambda1 - cxx, cxy))
+        angle_deg = ((angle_deg + 90) % 180) - 90
+        if angle_deg > 45:
+            angle_deg -= 90
+        elif angle_deg < -45:
+            angle_deg += 90
+        if abs(angle_deg) < 0.5:
+            return img
+        return img.rotate(-angle_deg, resample=Image.BICUBIC, expand=False, fillcolor="white")
+
     def _preprocess_for_ocr(self, img):
         """Enhance image for better OCR accuracy.
         
-        Applies grayscale, autocontrast, denoise, and sharpen using Pillow.
+        Applies deskew, grayscale, autocontrast, denoise, and sharpen using Pillow.
         Returns an RGB PIL Image ready for pytesseract.
         """
+        img = self._deskew(img)
         img = img.convert("L")
         img = ImageOps.autocontrast(img, cutoff=3)
         img = img.filter(ImageFilter.MedianFilter(size=3))
