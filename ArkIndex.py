@@ -11,7 +11,7 @@ Run the platform installer first if you haven't already:
   Linux   : bash install_linux.sh
 """
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 GITHUB_REPO = "becktorrescoding/ArkIndex"
 
 import base64
@@ -332,6 +332,8 @@ class Application(tk.Tk):
         self._title_label = None
         self._progress_total = 0
         self._progress_current = 0
+        self._progress_start = None
+        self._log_popup = None
 
         self.create_widgets()
         self._load_settings()
@@ -529,7 +531,14 @@ class Application(tk.Tk):
         log_frame = tk.Frame(self, padx=20, pady=10)
         log_frame.pack(fill="both", expand=True)
 
-        tk.Label(log_frame, text="Processing Log:", font=("Arial", 10, "bold")).pack(anchor="w")
+        log_header = tk.Frame(log_frame)
+        log_header.pack(fill="x")
+        tk.Label(log_header, text="Processing Log:", font=("Arial", 10, "bold")).pack(side="left")
+        self._popout_btn = tk.Button(
+            log_header, text="Pop Out", font=("Arial", 8),
+            command=self._toggle_popout_log, padx=4
+        )
+        self._popout_btn.pack(side="right")
 
         self.log_text = scrolledtext.ScrolledText(log_frame, height=10, width=70)
         self.log_text.pack(fill="both", expand=True)
@@ -542,15 +551,18 @@ class Application(tk.Tk):
     # Progress bar helpers
     # ------------------------------------------------------------------
     def _update_progress(self, current, total):
-        """Thread-safe progress bar update."""
+        """Thread-safe progress bar update with ETA."""
+        if self._progress_start is None:
+            self._progress_start = time.time()
         self._progress_current = current
         self._progress_total = total
 
         def _update():
             if total > 0:
                 self.progress_bar["value"] = (current / total) * 100
+            eta = self._format_eta(current, total)
             self.progress_label.config(
-                text=f"{current} / {total} files"
+                text=f"{current} / {total} files{eta}"
             )
 
         if threading.current_thread() is not threading.main_thread():
@@ -558,10 +570,21 @@ class Application(tk.Tk):
         else:
             _update()
 
+    def _format_eta(self, current, total):
+        if current < 1 or total < 2:
+            return ""
+        elapsed = time.time() - self._progress_start
+        per_file = elapsed / current
+        remaining = (total - current) * per_file
+        if remaining < 60:
+            return f" — {remaining:.0f}s remaining"
+        return f" — {int(remaining // 60)}m {int(remaining % 60)}s remaining"
+
     def _reset_progress(self):
         """Reset progress bar to ready state. Thread-safe."""
         self._progress_current = 0
         self._progress_total = 0
+        self._progress_start = None
 
         def _reset():
             self.progress_bar["value"] = 0
@@ -879,12 +902,66 @@ class Application(tk.Tk):
         if threading.current_thread() is not threading.main_thread():
             self.after_idle(lambda m=message: self.log(m))
             return
+        if self._log_popup is not None:
+            try:
+                self._log_popup.log_text.configure(state="normal")
+                self._log_popup.log_text.insert(tk.END, f"{message}\n")
+                self._log_popup.log_text.configure(state="disabled")
+                self._log_popup.log_text.see(tk.END)
+            except tk.TclError:
+                self._log_popup = None
         self.log_text.configure(state="normal")
         self.log_text.insert(tk.END, f"{message}\n")
         self.log_text.configure(state="disabled")
         self.log_text.see(tk.END)
         self.update_idletasks()
         self._write_log_file(message)
+
+    def _toggle_popout_log(self):
+        if self._log_popup is not None:
+            self._dock_log()
+        else:
+            self._popout_log()
+
+    def _popout_log(self):
+        popup = tk.Toplevel(self)
+        popup.title("ArkIndex — Processing Log")
+        popup.geometry("700x500")
+        popup.transient(self)
+        popup.protocol("WM_DELETE_WINDOW", self._dock_log)
+
+        popup.log_text = scrolledtext.ScrolledText(popup, state="disabled", height=10, width=70)
+        popup.log_text.pack(fill="both", expand=True, padx=10, pady=10)
+
+        existing = self.log_text.get("1.0", tk.END)
+        popup.log_text.configure(state="normal")
+        popup.log_text.insert(tk.END, existing)
+        popup.log_text.configure(state="disabled")
+        popup.log_text.see(tk.END)
+
+        tk.Button(
+            popup, text="Dock", font=("Arial", 9),
+            command=self._dock_log, width=10
+        ).pack(pady=(0, 10))
+
+        self._log_popup = popup
+        self.log_text.pack_forget()
+        self._popout_btn.config(text="Dock")
+
+    def _dock_log(self):
+        if self._log_popup is None:
+            return
+        popup_text = self._log_popup.log_text.get("1.0", tk.END)
+        self._log_popup.destroy()
+        self._log_popup = None
+
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.insert(tk.END, popup_text)
+        self.log_text.configure(state="disabled")
+
+        self.log_text.pack(fill="both", expand=True)
+        self._popout_btn.config(text="Pop Out")
 
     def _write_log_file(self, message):
         """Append *message* to the session log file in <output>/logs/."""
@@ -954,7 +1031,8 @@ class Application(tk.Tk):
             self.search_output_pdfs.set(data["search_output_pdfs"])
 
     def _on_close(self):
-        """Save settings before quitting."""
+        """Save settings and dock log before quitting."""
+        self._dock_log()
         self._save_settings()
         self.destroy()
 
@@ -1203,6 +1281,15 @@ class Application(tk.Tk):
         import difflib
         return difflib.SequenceMatcher(None, a, b).ratio()
 
+    def _walk(self, folder):
+        """Yield (root, dirs, files) tuples, logging errors accessing subdirectories on network drives."""
+        def onerror(e):
+            self.log(f"Warning: cannot access {e.filename}: {e.strerror}")
+        try:
+            yield from os.walk(folder, followlinks=False, onerror=onerror)
+        except OSError as e:
+            self.log(f"Warning: error scanning folder {folder}: {e}")
+
     def search_mode(self):
         self.log("=== Starting Search ===")
 
@@ -1220,7 +1307,7 @@ class Application(tk.Tk):
 
         all_files = [
             os.path.join(root, file)
-            for root, dirs, files in os.walk(input_folder, followlinks=False)
+            for root, dirs, files in self._walk(input_folder)
             for file in files
             if file.lower().endswith(self.valid_ext)
         ]
@@ -1240,7 +1327,15 @@ class Application(tk.Tk):
                 break
 
             image = os.path.basename(file_path)
-            self.log(f"Scanning {i}/{total}: {image}")
+            p = Path(file_path).resolve()
+            parts = p.parts
+            if len(parts) > 4:
+                display = ".../" + "/".join(parts[-3:])
+            elif len(parts) > 1:
+                display = "/".join(parts[-3:])
+            else:
+                display = image
+            self.log(f"Scanning {i}/{total}: {display}")
             try:
                 cached = self._get_cached_text(index, file_path)
                 if cached:
@@ -1289,7 +1384,7 @@ class Application(tk.Tk):
             if output_folder and os.path.isdir(output_folder):
                 self.log("Searching already-converted PDFs...")
                 pdf_files = []
-                for root, dirs, files in os.walk(output_folder, followlinks=False):
+                for root, dirs, files in self._walk(output_folder):
                     for file in files:
                         fp = os.path.join(root, file)
                         if file.lower().endswith(".pdf") and fp not in seen_paths:
@@ -1404,7 +1499,7 @@ class Application(tk.Tk):
         errors = 0
         total_files = 0
 
-        for root, dirs, files in os.walk(input_folder, followlinks=False):
+        for root, dirs, files in self._walk(input_folder):
             for file in files:
                 if file.lower().endswith(self.valid_ext):
                     total_files += 1
@@ -1415,7 +1510,7 @@ class Application(tk.Tk):
 
         stopped = False
         processed = 0
-        for root, dirs, files in os.walk(input_folder, followlinks=False):
+        for root, dirs, files in self._walk(input_folder):
             if stopped:
                 break
             for file in files:
@@ -1639,7 +1734,7 @@ class Application(tk.Tk):
         img = img.convert("RGB")
 
         win = tk.Toplevel(self.preview_win)
-        win.title(os.path.basename(file_path))
+        win.title(os.path.basename(str(file_path)))
         win.resizable(True, True)
 
         screen_w = win.winfo_screenwidth()
@@ -1894,26 +1989,13 @@ class Application(tk.Tk):
         return os.path.join(out, "file_index_python_search_engine.json")
 
     def _lock_index(self, shared=False):
-        """Lock the index lock-file. Returns fd / HANDLE, raises on failure."""
-        lock_path = self._index_path() + ".lock"
-        if os.name == "nt":
-            return _lock_index_windows(lock_path, shared)
-        fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY)
-        import fcntl
-        mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
-        fcntl.flock(fd, mode)
-        return fd
+        """Lock the index lock-file. No-op — os.replace provides atomic writes,
+        and file locks cause severe slowdowns on network drives."""
+        return None
 
     def _unlock_index(self, fd_or_handle):
-        """Release a lock obtained by _lock_index."""
-        if os.name == "nt":
-            _unlock_index_windows(fd_or_handle)
-            return
-        try:
-            import fcntl
-            fcntl.flock(fd_or_handle, fcntl.LOCK_UN)
-        finally:
-            os.close(fd_or_handle)
+        """Release a lock obtained by _lock_index. No-op."""
+        pass
 
     def _ensure_index(self):
         """Check if the index file exists. If missing, prompt user on the main thread.
@@ -2016,7 +2098,6 @@ class Application(tk.Tk):
         path = self._index_path()
         if not path:
             return {}
-        fd = self._lock_index(shared=True)
         try:
             with open(path) as f:
                 raw = f.read()
@@ -2027,29 +2108,29 @@ class Application(tk.Tk):
             return json.loads(decompressed)
         except (FileNotFoundError, json.JSONDecodeError, base64.binascii.Error, OSError):
             return {}
-        finally:
-            self._unlock_index(fd)
 
     def _save_index(self, index):
         path = self._index_path()
         if not path:
             return
-        fd = self._lock_index(shared=False)
-        try:
-            raw = json.dumps(index, indent=2).encode()
-            compressed = gzip.compress(raw)
-            encoded = base64.b64encode(compressed).decode()
-            tmp = path + ".tmp"
-            with open(tmp, "w") as f:
-                f.write(encoded)
-            os.replace(tmp, path)
-        except OSError as e:
-            self.log(f"Warning: could not save index: {e}")
-        finally:
-            self._unlock_index(fd)
+        raw = json.dumps(index, indent=2).encode()
+        compressed = gzip.compress(raw)
+        encoded = base64.b64encode(compressed).decode()
+        tmp = path + ".tmp"
+        for attempt in range(3):
+            try:
+                with open(tmp, "w") as f:
+                    f.write(encoded)
+                os.replace(tmp, path)
+                return
+            except OSError as e:
+                if attempt < 2:
+                    time.sleep(1)
+                    continue
+                self.log(f"Warning: could not save index after 3 tries: {e}")
 
     def _get_cached_text(self, index, file_path):
-        abs_path = os.path.abspath(file_path)
+        abs_path = os.path.abspath(file_path).lower()
         entry = index.get(abs_path)
         if entry is None:
             return None
@@ -2061,7 +2142,7 @@ class Application(tk.Tk):
         return entry.get("ocr_text")
 
     def _index_entry(self, index, file_path, ocr_text=None, **kw):
-        abs_path = os.path.abspath(file_path)
+        abs_path = os.path.abspath(file_path).lower()
         entry = index.get(abs_path, {})
         if ocr_text is not None:
             entry["ocr_text"] = ocr_text
@@ -2134,7 +2215,7 @@ class Application(tk.Tk):
                     break
 
             if degree_line_idx is not None:
-                degree_start = re.search(re.escape(first_word), degree_line, re.IGNORECASE)
+                degree_start = re.search(re.escape(first_word), str(degree_line), re.IGNORECASE)
                 if degree_start:
                     before_degree = degree_line[: degree_start.start()].strip()
                     if re.search(r"Graduated[\s-]*Received", before_degree, re.IGNORECASE):
@@ -2239,6 +2320,7 @@ class HeadlessApp(Application):
         self._title_label = None
         self._progress_total = 0
         self._progress_current = 0
+        self._progress_start = None
 
     def log(self, message):
         print(message)
@@ -2262,13 +2344,24 @@ class HeadlessApp(Application):
             pass
 
     def _update_progress(self, current, total):
+        if self._progress_start is None:
+            self._progress_start = time.time()
         if total:
-            print(f"\rProgress: {current}/{total}", end="", file=sys.stderr)
+            msg = f"\rProgress: {current}/{total}"
+            if current > 0:
+                elapsed = time.time() - self._progress_start
+                per_file = elapsed / current
+                remaining = (total - current) * per_file
+                if remaining < 60:
+                    msg += f" — {remaining:.0f}s remaining"
+                else:
+                    msg += f" — {int(remaining // 60)}m {int(remaining % 60)}s remaining"
+            print(msg, end="", file=sys.stderr)
             if current == total:
                 print(file=sys.stderr)
 
     def _reset_progress(self):
-        pass
+        self._progress_start = None
 
     def after(self, ms, func, *args):
         try:
@@ -2401,86 +2494,6 @@ def _build_parser():
                     action="store_true", default=False,
                     help="Also search already-converted PDFs in output folder")
     return parser
-
-
-def _lock_index_windows(lock_path, shared):
-    """Open/create a lock file and acquire a lock via LockFileEx.
-
-    Returns the Windows HANDLE (closable via CloseHandle).
-    """
-    import ctypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    GENERIC_READ = 0x80000000
-    GENERIC_WRITE = 0x40000000
-    FILE_SHARE_READ = 1
-    FILE_SHARE_WRITE = 2
-    OPEN_ALWAYS = 4
-    FILE_ATTRIBUTE_NORMAL = 0x80
-
-    kernel32.CreateFileW.argtypes = [
-        ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
-        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
-        ctypes.c_void_p,
-    ]
-    kernel32.CreateFileW.restype = ctypes.c_void_p
-
-    handle = kernel32.CreateFileW(
-        lock_path,
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-        None,
-        OPEN_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        None,
-    )
-    if not handle or handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
-
-    class OVERLAPPED(ctypes.Structure):
-        _fields_ = [
-            ("Internal", ctypes.c_void_p),
-            ("InternalHigh", ctypes.c_void_p),
-            ("Offset", ctypes.c_uint32),
-            ("OffsetHigh", ctypes.c_uint32),
-            ("hEvent", ctypes.c_void_p),
-        ]
-
-    overlapped = OVERLAPPED()
-    flags = 0 if shared else 2  # 2 = LOCKFILE_EXCLUSIVE_LOCK
-    kernel32.LockFileEx.argtypes = [
-        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
-        ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(OVERLAPPED),
-    ]
-    if not kernel32.LockFileEx(handle, flags, 0, 1, 0, ctypes.byref(overlapped)):
-        kernel32.CloseHandle(handle)
-        raise ctypes.WinError(ctypes.get_last_error())
-
-    return handle
-
-
-def _unlock_index_windows(handle):
-    """Release a Windows lock and close the handle."""
-    import ctypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-    class OVERLAPPED(ctypes.Structure):
-        _fields_ = [
-            ("Internal", ctypes.c_void_p),
-            ("InternalHigh", ctypes.c_void_p),
-            ("Offset", ctypes.c_uint32),
-            ("OffsetHigh", ctypes.c_uint32),
-            ("hEvent", ctypes.c_void_p),
-        ]
-
-    overlapped = OVERLAPPED()
-    kernel32.UnlockFileEx.argtypes = [
-        ctypes.c_void_p, ctypes.c_uint32,
-        ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(OVERLAPPED),
-    ]
-    kernel32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(overlapped))
-    kernel32.CloseHandle(handle)
 
 
 def main():
