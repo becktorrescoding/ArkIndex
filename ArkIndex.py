@@ -416,18 +416,18 @@ class Application(tk.Tk):
         tk.Label(self.search_frame, text="Search Name (First Last [Mi]):", font=["Arial", 9]).grid(
             row=0, column=0, sticky="w", pady=5
         )
-        tk.Entry(self.search_frame, textvariable=self.search_name, width=30).grid(
-            row=0, column=1, padx=5, sticky="w"
-        )
+        self._search_name_entry = tk.Entry(self.search_frame, textvariable=self.search_name, width=30)
+        self._search_name_entry.grid(row=0, column=1, padx=5, sticky="w")
+        self._search_name_entry.bind("<Return>", lambda e: self.start())
 
         tk.Label(
             self.search_frame,
             text="Optional: Filter by Year (yyyy):\n[Admission/Graduation/DOB]",
             font=["Arial", 9],
         ).grid(row=1, column=0, sticky="w", pady=5)
-        tk.Entry(self.search_frame, textvariable=self.search_year, width=10).grid(
-            row=1, column=1, padx=5, sticky="w"
-        )
+        self._search_year_entry = tk.Entry(self.search_frame, textvariable=self.search_year, width=10)
+        self._search_year_entry.grid(row=1, column=1, padx=5, sticky="w")
+        self._search_year_entry.bind("<Return>", lambda e: self.start())
 
         btn_frame = tk.Frame(self)
         btn_frame.pack(pady=5)
@@ -503,6 +503,7 @@ class Application(tk.Tk):
         self.log_text.configure(state="disabled")
 
         self._setup_drag_drop()
+        self._bind_shortcuts()
 
     # ------------------------------------------------------------------
     # Progress bar helpers
@@ -650,6 +651,22 @@ class Application(tk.Tk):
         """Block while paused. Returns True if stop has been requested."""
         self._pause_event.wait()
         return self._stop_event.is_set()
+
+    def _bind_shortcuts(self):
+        self.bind_all("<Control-o>", lambda e: self.browse_input())
+        self.bind_all("<Control-O>", lambda e: self.browse_input())
+        self.bind_all("<Control-Shift-o>", lambda e: self.browse_output())
+        self.bind_all("<Control-Shift-O>", lambda e: self.browse_output())
+        self.bind_all("<Control-Return>", lambda e: self.start())
+        self.bind_all("<Control-f>", lambda e: self._focus_search())
+        self.bind_all("<Control-F>", lambda e: self._focus_search())
+        self.bind_all("<Control-e>", lambda e: self._export_results())
+        self.bind_all("<Control-E>", lambda e: self._export_results())
+        self.bind_all("<Control-i>", lambda e: self._import_index_ui())
+        self.bind_all("<Control-I>", lambda e: self._import_index_ui())
+
+    def _focus_search(self):
+        self._search_name_entry.focus_set()
 
     def toggle_mode(self):
         if self.mode.get() == "bulk":
