@@ -293,6 +293,7 @@ class Application(tk.Tk):
         self.search_year = tk.StringVar()
         self.mode = tk.StringVar(value="search")
         self.valid_ext = (".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".TIF", ".tiff", ".tif")
+        self.search_output_pdfs = tk.BooleanVar(value=False)
 
         self._pause_event = threading.Event()
         self._pause_event.set()
@@ -428,6 +429,13 @@ class Application(tk.Tk):
         self._search_year_entry = tk.Entry(self.search_frame, textvariable=self.search_year, width=10)
         self._search_year_entry.grid(row=1, column=1, padx=5, sticky="w")
         self._search_year_entry.bind("<Return>", lambda e: self.start())
+
+        tk.Checkbutton(
+            self.search_frame,
+            text="Search output folder for matching PDFs",
+            variable=self.search_output_pdfs,
+            font=["Arial", 9],
+        ).grid(row=2, column=0, sticky="w", pady=5)
 
         btn_frame = tk.Frame(self)
         btn_frame.pack(pady=5)
@@ -881,6 +889,7 @@ class Application(tk.Tk):
             "mode": self.mode.get(),
             "theme": self._theme.get(),
             "geometry": self.winfo_geometry(),
+            "search_output_pdfs": self.search_output_pdfs.get(),
         }
         try:
             with open(self._settings_path(), "w") as f:
@@ -911,6 +920,8 @@ class Application(tk.Tk):
             self._theme.set(_detect_system_theme())
         if data.get("geometry"):
             self.geometry(data["geometry"])
+        if "search_output_pdfs" in data:
+            self.search_output_pdfs.set(data["search_output_pdfs"])
 
     def _on_close(self):
         """Save settings before quitting."""
@@ -1240,48 +1251,49 @@ class Application(tk.Tk):
             self.log(f"Index cache hits: {cache_hits}/{total}")
 
         # -- Also search already-converted PDFs in the output folder ----
-        output_folder = self.output_path.get()
-        seen_paths = set(all_files)
-        pdf_hits = 0
-        if output_folder and os.path.isdir(output_folder):
-            self.log("Searching already-converted PDFs...")
-            pdf_files = []
-            for root, dirs, files in os.walk(output_folder, followlinks=False):
-                for file in files:
-                    fp = os.path.join(root, file)
-                    if file.lower().endswith(".pdf") and fp not in seen_paths:
-                        pdf_files.append(fp)
-            pdf_total = len(pdf_files)
-            self._update_progress(0, total + pdf_total)
-            for i, file_path in enumerate(pdf_files, start=1):
-                self._update_progress(total + i, total + pdf_total)
-                if self._check_pause_stop():
-                    self._reset_progress()
-                    break
-                try:
-                    doc = pymupdf.open(file_path)
+        if self.search_output_pdfs.get():
+            output_folder = self.output_path.get()
+            seen_paths = set(all_files)
+            pdf_hits = 0
+            if output_folder and os.path.isdir(output_folder):
+                self.log("Searching already-converted PDFs...")
+                pdf_files = []
+                for root, dirs, files in os.walk(output_folder, followlinks=False):
+                    for file in files:
+                        fp = os.path.join(root, file)
+                        if file.lower().endswith(".pdf") and fp not in seen_paths:
+                            pdf_files.append(fp)
+                pdf_total = len(pdf_files)
+                self._update_progress(0, total + pdf_total)
+                for i, file_path in enumerate(pdf_files, start=1):
+                    self._update_progress(total + i, total + pdf_total)
+                    if self._check_pause_stop():
+                        self._reset_progress()
+                        break
                     try:
-                        text = "".join(page.get_text() for page in doc)
-                    finally:
-                        doc.close()
-                    if not text.strip():
-                        continue
-                    matched_words = [
-                        word for word in keywords if self._has_valid_match(text, word)
-                    ]
-                    count = len(matched_words)
-                    if count > 0:
-                        name_ctx = sum(
-                            1 for kw in matched_words if self._in_name_context(text, kw)
-                        )
-                        scores[file_path] = name_ctx * 1000 + count
-                        pdf_hits += 1
-                        ctx_info = f", {name_ctx}/{len(keywords)} in name context" if name_ctx else ""
-                        self.log(f"PDF match ({count}/{len(keywords)}{ctx_info}): {file_path}")
-                except Exception as e:
-                    self.log(f"Error reading PDF {file_path}: {e}")
-            if pdf_hits:
-                self.log(f"Found {pdf_hits} matching PDF(s) in output folder.")
+                        doc = pymupdf.open(file_path)
+                        try:
+                            text = "".join(page.get_text() for page in doc)
+                        finally:
+                            doc.close()
+                        if not text.strip():
+                            continue
+                        matched_words = [
+                            word for word in keywords if self._has_valid_match(text, word)
+                        ]
+                        count = len(matched_words)
+                        if count > 0:
+                            name_ctx = sum(
+                                1 for kw in matched_words if self._in_name_context(text, kw)
+                            )
+                            scores[file_path] = name_ctx * 1000 + count
+                            pdf_hits += 1
+                            ctx_info = f", {name_ctx}/{len(keywords)} in name context" if name_ctx else ""
+                            self.log(f"PDF match ({count}/{len(keywords)}{ctx_info}): {file_path}")
+                    except Exception as e:
+                        self.log(f"Error reading PDF {file_path}: {e}")
+                if pdf_hits:
+                    self.log(f"Found {pdf_hits} matching PDF(s) in output folder.")
 
         if not scores:
             self.log("No matching image(s) found.")
