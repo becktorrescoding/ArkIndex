@@ -1,6 +1,6 @@
 # ArkIndex
 
-[![CI](https://github.com/becktorrescoding/image_to_pdf/actions/workflows/ci.yml/badge.svg)](https://github.com/becktorrescoding/image_to_pdf/actions/workflows/ci.yml)
+[![CI](https://github.com/becktorrescoding/ArkIndex/actions/workflows/ci.yml/badge.svg)](https://github.com/becktorrescoding/ArkIndex/actions/workflows/ci.yml)
 
 A Python GUI application that combines OCR-based document search with image-to-PDF conversion capabilities. Built to help universities digitize and manage pre-digital era scanned transcripts and degrees. Features an intuitive graphical interface with two operation modes: search through image files and PDFs using Optical Character Recognition (OCR) to find specific documents, or bulk convert entire folders of images to searchable PDFs — all without needing to edit code.
 
@@ -33,6 +33,10 @@ A Python GUI application that combines OCR-based document search with image-to-P
 - **PDF Text Layer Verification**: After OCR, verifies the output PDF actually contains searchable text and warns if empty or sparse
 - **Search Within PDFs**: Scans both images and already-converted PDFs in the output folder; results shown together in the preview window
 - **Drag & Drop / Paste**: Drop image files directly onto the window or paste from clipboard (Ctrl+V) to process them one by one
+- **Image Deskew**: Automatic skew correction using PCA on pixel coordinates — no numpy required
+- **Keyboard Shortcuts**: Quick access to all major actions — Ctrl+O, Ctrl+Shift+O, Ctrl+Return, Ctrl+F, Ctrl+E, Ctrl+I
+- **CLI Mode**: Run headless with subcommands `search`, `convert`, and `export` — ideal for scripting and automation
+- **Search Output Toggle**: Optionally search already-converted PDFs in the output folder; disabled by default
 
 ## Prerequisites
 
@@ -69,7 +73,7 @@ If the platform installer is not suitable for your environment, follow the steps
 ### 1. Clone or Download this Repository
 
 ```bash
-git clone https://github.com/becktorrescoding/image_to_pdf
+git clone https://github.com/becktorrescoding/ArkIndex
 ```
 Or download and extract the ZIP from the GitHub page.
 
@@ -220,6 +224,26 @@ python ArkIndex.py
 
 A graphical window will open with the following interface:
 
+### CLI Usage (Headless Mode)
+
+Pass arguments to run without a GUI:
+
+```bash
+# Search for documents by name
+./ArkIndex.py search /path/to/input /path/to/output "John Smith"
+
+# Search with year filter and include output PDFs
+./ArkIndex.py search /path/to/input /path/to/output "John Smith" --year 1998 --search-output
+
+# Bulk convert all images to searchable PDFs
+./ArkIndex.py convert /path/to/input /path/to/output
+
+# Search and export results to CSV
+./ArkIndex.py export /path/to/input /path/to/output "John Smith" --output-file results.csv
+```
+
+Run `./ArkIndex.py --help` or `./ArkIndex.py <subcommand> --help` for details.
+
 ---
 
 ### Step-by-Step Usage
@@ -356,14 +380,26 @@ The application uses a **class-based tkinter GUI** with the following structure:
 Application (tk.Tk)
 ├── __init__()              # Initialize window and variables
 ├── create_widgets()        # Build GUI interface
+├── _update_progress()      # Thread-safe progress bar update
+├── _reset_progress()       # Reset progress bar to 0
+├── _setup_drag_drop()      # Register drag-and-drop handlers (tkdnd, Ctrl+V)
+├── _on_file_drop()         # Handle dropped file from OS
+├── _paste_from_clipboard() # Handle Ctrl+V paste event
+├── _process_dropped_file() # Convert a single dropped/pasted file
+├── _reset_buttons()        # Re-enable Start and disable Pause/Stop
 ├── toggle_pause()          # Pause or resume processing
 ├── request_stop()          # Signal worker thread to stop after current file
 ├── _check_pause_stop()     # Called between files; blocks while paused, returns True if stopped
-├── _reset_buttons()        # Re-enable Start and disable Pause/Stop
+├── _bind_shortcuts()       # Register global keyboard shortcuts
+├── _focus_search()         # Focus the search name input field
 ├── toggle_mode()           # Show/hide search fields based on mode
 ├── _toggle_theme()         # Switch between light and dark mode
+├── _apply_theme()          # Recursively apply theme colors to all widgets
+├── _theme_widgets()        # Walk children and configure colors by widget class
 ├── _check_for_updates()    # Check GitHub for newer version; auto-download and replace on user consent
 ├── _on_close()             # Save settings on window close
+├── _save_settings()        # Persist folders, mode, theme, geometry, and toggles to disk
+├── _load_settings()        # Restore settings from disk; auto-detect theme on first run
 ├── browse_input()          # Handle input folder selection
 ├── browse_output()         # Handle output folder selection
 ├── start()                 # Validate inputs and start thread
@@ -371,11 +407,14 @@ Application (tk.Tk)
 ├── search_mode()           # Search Mode workflow
 ├── matches_found()         # Handle search results and year filtering
 ├── filter_year()           # Filter matched files by year
+├── _deskew(img)            # Correct image skew via PCA on pixel coordinates
+├── _preprocess_for_ocr()   # Enhance image for OCR (deskew → grayscale → autocontrast → denoise → sharpen)
 ├── bulk_mode()             # Bulk Convert Mode workflow
 ├── show_preview_window()   # Preview matched files before converting
 ├── _show_large_preview()   # Full-size preview on thumbnail click
 ├── open_as_image()         # Open image or PDF first page as PIL Image (via PyMuPDF)
 ├── convert_image()         # Convert single image to searchable PDF
+├── _verify_text_layer()    # Check output PDF for sparse/empty text layer
 ├── _prompt_replace_or_append()  # Prompt user on duplicate filename
 ├── generate_filename()     # Extract fields from OCR text and build filename
 ├── _extract_name()         # Pull student name from OCR via name labels
@@ -396,9 +435,9 @@ Application (tk.Tk)
 ├── _unlock_windows()       # Windows UnlockFileEx
 ├── _write_log_file()       # Append message to session log in <output>/logs/
 ├── _settings_path()        # Path to per-device settings in system temp directory
-├── _save_settings()        # Persist folders and mode to disk
-├── _load_settings()        # Restore folders and mode from disk
 └── log()                   # Display messages in GUI (thread-safe)
+
+**HeadlessApp (Application)** — CLI mode using `_StringVar`/`_BooleanVar` stand-ins, methods that interact with Tkinter/shell are no-ops or overridden for headless operation.
 ```
 
 ### Automatic Filename Generation (Search Mode)
@@ -690,7 +729,7 @@ Tomás Beck Torres - becktorrescoding@gmail.com
 
 Website - becktorrescoding@odoo.com
 
-Project Link: [https://github.com/becktorrescoding/image_to_pdf](https://github.com/becktorrescoding/image_to_pdf)
+Project Link: [https://github.com/becktorrescoding/ArkIndex](https://github.com/becktorrescoding/ArkIndex)
 
 ## Acknowledgments
 
